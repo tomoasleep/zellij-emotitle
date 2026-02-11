@@ -21,10 +21,12 @@ pub struct EmotitleState {
     pub tab_infos: Vec<TabInfo>,
     pane_entries: HashMap<PaneRef, Entry>,
     tab_entries: HashMap<usize, Entry>,
+    pending_pane_restores: HashMap<PaneRef, String>,
+    pending_tab_restores: HashMap<usize, String>,
 }
 
 impl EmotitleState {
-    pub fn update_pane_manifest(&mut self, pane_manifest: PaneManifest) -> Vec<(PaneRef, String)> {
+    pub fn update_pane_manifest(&mut self, pane_manifest: PaneManifest) -> bool {
         self.pane_manifest = Some(pane_manifest.clone());
         let focused: Vec<PaneRef> = pane_manifest
             .panes
@@ -36,7 +38,7 @@ impl EmotitleState {
         self.take_temp_panes_on_focus(&focused)
     }
 
-    pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> Vec<(usize, String)> {
+    pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> bool {
         self.tab_infos = tab_infos.clone();
         let focused: Vec<usize> = tab_infos
             .iter()
@@ -147,7 +149,7 @@ impl EmotitleState {
             .map(|entry| entry.original_title.clone())
     }
 
-    fn take_temp_panes_on_focus(&mut self, focused: &[PaneRef]) -> Vec<(PaneRef, String)> {
+    fn take_temp_panes_on_focus(&mut self, focused: &[PaneRef]) -> bool {
         let focused_set: std::collections::HashSet<PaneRef> = focused.iter().cloned().collect();
         let to_restore: Vec<PaneRef> = self
             .pane_entries
@@ -156,17 +158,18 @@ impl EmotitleState {
             .map(|(pane_ref, _)| pane_ref.clone())
             .collect();
 
-        to_restore
-            .into_iter()
-            .filter_map(|pane_ref| {
-                self.pane_entries
-                    .remove(&pane_ref)
-                    .map(|entry| (pane_ref, entry.original_title))
-            })
-            .collect()
+        let mut set_timer = false;
+        for pane_ref in to_restore {
+            if let Some(entry) = self.pane_entries.remove(&pane_ref) {
+                self.pending_pane_restores
+                    .insert(pane_ref, entry.original_title);
+                set_timer = true;
+            }
+        }
+        set_timer
     }
 
-    fn take_temp_tabs_on_focus(&mut self, focused: &[usize]) -> Vec<(usize, String)> {
+    fn take_temp_tabs_on_focus(&mut self, focused: &[usize]) -> bool {
         let focused_set: std::collections::HashSet<usize> = focused.iter().copied().collect();
         let to_restore: Vec<usize> = self
             .tab_entries
@@ -177,14 +180,23 @@ impl EmotitleState {
             .map(|(tab_index, _)| *tab_index)
             .collect();
 
-        to_restore
-            .into_iter()
-            .filter_map(|tab_index| {
-                self.tab_entries
-                    .remove(&tab_index)
-                    .map(|entry| (tab_index, entry.original_title))
-            })
-            .collect()
+        let mut set_timer = false;
+        for tab_index in to_restore {
+            if let Some(entry) = self.tab_entries.remove(&tab_index) {
+                self.pending_tab_restores
+                    .insert(tab_index, entry.original_title);
+                set_timer = true;
+            }
+        }
+        set_timer
+    }
+
+    pub fn take_pending_pane_restores(&mut self) -> Vec<(PaneRef, String)> {
+        self.pending_pane_restores.drain().collect()
+    }
+
+    pub fn take_pending_tab_restores(&mut self) -> Vec<(usize, String)> {
+        self.pending_tab_restores.drain().collect()
     }
 }
 
@@ -285,10 +297,13 @@ mod tests {
 
         let mut panes = HashMap::new();
         panes.insert(0, vec![pane_info(10, false, true, "bash | 🚀")]);
-        let restored = state.update_pane_manifest(PaneManifest { panes });
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
 
-        assert_eq!(restored, vec![(PaneRef::Terminal(10), "bash".to_string())]);
+        assert!(set_timer);
         assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_none());
+
+        let restored = state.take_pending_pane_restores();
+        assert_eq!(restored, vec![(PaneRef::Terminal(10), "bash".to_string())]);
     }
 
     #[test]
@@ -296,9 +311,12 @@ mod tests {
         let mut state = EmotitleState::default();
         state.upsert_tab_entry(2, "build".to_string(), "✅".to_string(), Mode::Temp);
 
-        let restored = state.update_tab_infos(vec![tab_info(2, true, "build | ✅")]);
+        let set_timer = state.update_tab_infos(vec![tab_info(2, true, "build | ✅")]);
 
-        assert_eq!(restored, vec![(2, "build".to_string())]);
+        assert!(set_timer);
         assert!(state.tab_original_title(2).is_none());
+
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored, vec![(2, "build".to_string())]);
     }
 }

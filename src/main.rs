@@ -20,21 +20,33 @@ impl ZellijPlugin for PluginState {
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
         ]);
-        subscribe(&[EventType::PaneUpdate, EventType::TabUpdate]);
+        subscribe(&[
+            EventType::PaneUpdate,
+            EventType::TabUpdate,
+            EventType::Timer,
+        ]);
         set_selectable(false);
     }
 
     fn update(&mut self, event: Event) -> bool {
         match event {
             Event::PaneUpdate(pane_manifest) => {
-                let restores = self.state.update_pane_manifest(pane_manifest);
-                for (pane_ref, original_title) in restores {
-                    rename_pane(&pane_ref, original_title);
+                if self.state.update_pane_manifest(pane_manifest) {
+                    set_timeout(1.0);
                 }
             }
             Event::TabUpdate(tab_infos) => {
-                let restores = self.state.update_tab_infos(tab_infos);
-                for (tab_index, original_title) in restores {
+                if self.state.update_tab_infos(tab_infos) {
+                    set_timeout(1.0);
+                }
+            }
+            Event::Timer(_seconds) => {
+                let pane_restores = self.state.take_pending_pane_restores();
+                for (pane_ref, original_title) in pane_restores {
+                    rename_pane(&pane_ref, original_title);
+                }
+                let tab_restores = self.state.take_pending_tab_restores();
+                for (tab_index, original_title) in tab_restores {
                     rename_tab((tab_index + 1) as u32, original_title);
                 }
             }
