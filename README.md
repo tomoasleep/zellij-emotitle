@@ -35,7 +35,7 @@ load_plugins {
 `zellij pipe` の `--args` を使って指定します。
 
 - `target`: `pane` または `tab` (必須)
-- `emojis`: 付与する絵文字 (必須)
+- `emojis`: 付与する絵文字 (必須) - gemoji の shortcode (`:rocket:`) も使用可能
 - `mode`: `temp` or `permanent` (省略時 `temp`)
 - `pane_id`: pane id (任意)
 - `tab_index`: tab index (0-based, 任意)
@@ -96,3 +96,7 @@ zellij --session "$ZELLIJ_SESSION_NAME" pipe \
 ## 返り値
 
 `zellij pipe` の stdout に `ok` またはエラーメッセージを返します。
+
+## 参考
+
+[gemoji](https://github.com/github/gemoji) - GitHub の emoji shortcodes (v4.1.0)

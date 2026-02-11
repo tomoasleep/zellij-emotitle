@@ -1,5 +1,30 @@
 use std::collections::BTreeMap;
 
+fn replace_colon_emoji(s: &str) -> String {
+    let mut result = String::new();
+    let mut rest = s;
+
+    while let Some((i, m, n, j)) = rest
+        .find(':')
+        .map(|i| (i, i + 1))
+        .and_then(|(i, m)| rest[m..].find(':').map(|x| (i, m, m + x, m + x + 1)))
+    {
+        match emojis::get_by_shortcode(&rest[m..n]) {
+            Some(emoji) => {
+                result.push_str(&rest[..i]);
+                result.push_str(emoji.as_str());
+                rest = &rest[j..];
+            }
+            None => {
+                result.push_str(&rest[..n]);
+                rest = &rest[n..];
+            }
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Temp,
@@ -28,11 +53,11 @@ pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
     let target = args
         .get("target")
         .ok_or_else(|| "missing required arg: target".to_string())?;
-    let emojis = args
-        .get("emojis")
-        .ok_or_else(|| "missing required arg: emojis".to_string())?
-        .trim()
-        .to_string();
+    let emojis = replace_colon_emoji(
+        args.get("emojis")
+            .ok_or_else(|| "missing required arg: emojis".to_string())?
+            .trim(),
+    );
     if emojis.is_empty() {
         return Err("emojis must not be empty".to_string());
     }
@@ -92,6 +117,42 @@ fn parse_optional_usize(value: Option<&String>, key: &str) -> Result<Option<usiz
 }
 
 #[cfg(test)]
+mod replace_tests {
+    use super::*;
+
+    #[test]
+    fn replace_colon_emoji_with_shortcode() {
+        assert_eq!(replace_colon_emoji("launch :rocket:"), "launch 🚀");
+    }
+
+    #[test]
+    fn replace_colon_emoji_with_multiple() {
+        assert_eq!(replace_colon_emoji(":rocket::book:"), "🚀📚");
+    }
+
+    #[test]
+    fn replace_colon_emoji_with_unknown() {
+        assert_eq!(replace_colon_emoji(":unknown:"), ":unknown:");
+    }
+
+    #[test]
+    fn replace_colon_emoji_with_mixed() {
+        assert_eq!(replace_colon_emoji("🚀:rocket:"), "🚀🚀");
+    }
+
+    #[test]
+    fn replace_colon_emoji_no_change() {
+        assert_eq!(replace_colon_emoji("launch nothing"), "launch nothing");
+    }
+
+    #[test]
+    fn replace_colon_emoji_edge_cases() {
+        assert_eq!(replace_colon_emoji(":maybe:rocket:"), ":maybe🚀");
+        assert_eq!(replace_colon_emoji(":rocket::rocket:"), "🚀🚀");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -147,5 +208,73 @@ mod tests {
             ("emojis", "✅"),
         ]);
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_command_with_colon_emoji() {
+        let args = map(&[("target", "pane"), ("emojis", ":rocket:"), ("mode", "temp")]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Pane { pane_id: None },
+                emojis: "🚀".to_string(),
+                mode: Mode::Temp,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_command_with_multiple_colon_emojis() {
+        let args = map(&[
+            ("target", "pane"),
+            ("emojis", ":rocket::book:"),
+            ("mode", "permanent"),
+        ]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Pane { pane_id: None },
+                emojis: "🚀📚".to_string(),
+                mode: Mode::Permanent,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_command_with_unknown_colon_emoji() {
+        let args = map(&[
+            ("target", "pane"),
+            ("emojis", ":unknown:"),
+            ("mode", "temp"),
+        ]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Pane { pane_id: None },
+                emojis: ":unknown:".to_string(),
+                mode: Mode::Temp,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_command_with_mixed_emojis() {
+        let args = map(&[
+            ("target", "pane"),
+            ("emojis", "🚀:rocket:"),
+            ("mode", "temp"),
+        ]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Pane { pane_id: None },
+                emojis: "🚀🚀".to_string(),
+                mode: Mode::Temp,
+            }
+        );
     }
 }

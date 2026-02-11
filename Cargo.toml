@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 zellij-tile = "0.43.1"
+emojis = "0.8.0"
