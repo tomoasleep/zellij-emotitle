@@ -12,7 +12,7 @@ pub enum PaneRef {
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub original_title: String,
-    pub mode: Mode,
+    pub emojis: String,
 }
 
 #[derive(Default)]
@@ -48,7 +48,9 @@ impl EmotitleState {
             .filter(|pane| pane.is_focused)
             .map(pane_ref_from_pane_info)
             .collect();
-        self.take_temp_panes_on_focus(&focused)
+        let cleaned = self.clean_focused_panes_on_focus(&pane_manifest);
+        let _ = focused;
+        cleaned
     }
 
     pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> bool {
@@ -66,7 +68,9 @@ impl EmotitleState {
             .filter(|tab| tab.active)
             .map(|tab| tab.position)
             .collect();
-        self.take_temp_tabs_on_focus(&focused)
+        let cleaned = self.clean_focused_tabs_on_focus(&tab_infos);
+        let _ = focused;
+        cleaned
     }
 
     pub fn resolve_tab_index_from_pane_id(&self, pane_id: u32) -> Option<usize> {
@@ -109,6 +113,20 @@ impl EmotitleState {
         })
     }
 
+    pub fn pane_effective_title(&self, pane_ref: &PaneRef) -> Option<String> {
+        let pane_title = self.pane_title(pane_ref);
+        let entry = self.pane_entries.get(pane_ref);
+
+        match (pane_title, entry) {
+            (Some(title), Some(entry)) if title == entry.original_title => {
+                Some(title_with_emojis(&entry.original_title, &entry.emojis))
+            }
+            (Some(title), _) => Some(title),
+            (None, Some(entry)) => Some(title_with_emojis(&entry.original_title, &entry.emojis)),
+            (None, None) => None,
+        }
+    }
+
     pub fn tab_title(&self, tab_index: usize) -> Option<String> {
         self.tab_infos
             .iter()
@@ -116,12 +134,26 @@ impl EmotitleState {
             .map(|tab| tab.name.clone())
     }
 
+    pub fn tab_effective_title(&self, tab_index: usize) -> Option<String> {
+        let tab_title = self.tab_title(tab_index);
+        let entry = self.tab_entries.get(&tab_index);
+
+        match (tab_title, entry) {
+            (Some(title), Some(entry)) if title == entry.original_title => {
+                Some(title_with_emojis(&entry.original_title, &entry.emojis))
+            }
+            (Some(title), _) => Some(title),
+            (None, Some(entry)) => Some(title_with_emojis(&entry.original_title, &entry.emojis)),
+            (None, None) => None,
+        }
+    }
+
     pub fn upsert_pane_entry(
         &mut self,
         pane_ref: PaneRef,
         original_title: String,
-        _emojis: String,
-        mode: Mode,
+        emojis: String,
+        _mode: Mode,
     ) {
         let original_title = self
             .pane_entries
@@ -132,7 +164,7 @@ impl EmotitleState {
             pane_ref,
             Entry {
                 original_title,
-                mode,
+                emojis,
             },
         );
     }
@@ -141,8 +173,8 @@ impl EmotitleState {
         &mut self,
         tab_index: usize,
         original_title: String,
-        _emojis: String,
-        mode: Mode,
+        emojis: String,
+        _mode: Mode,
     ) {
         let original_title = self
             .tab_entries
@@ -153,7 +185,7 @@ impl EmotitleState {
             tab_index,
             Entry {
                 original_title,
-                mode,
+                emojis,
             },
         );
     }
@@ -170,41 +202,43 @@ impl EmotitleState {
             .map(|entry| entry.original_title.clone())
     }
 
-    fn take_temp_panes_on_focus(&mut self, _focused: &[PaneRef]) -> bool {
-        let to_restore: Vec<PaneRef> = self
-            .pane_entries
-            .iter()
-            .filter(|(_, entry)| entry.mode == Mode::Temp)
-            .map(|(pane_ref, _)| pane_ref.clone())
-            .collect();
-
+    fn clean_focused_panes_on_focus(&mut self, pane_manifest: &PaneManifest) -> bool {
         let mut set_timer = false;
-        for pane_ref in to_restore {
-            if let Some(entry) = self.pane_entries.remove(&pane_ref) {
+
+        for pane in pane_manifest.panes.values().flat_map(|panes| panes.iter()) {
+            if !pane.is_focused {
+                continue;
+            }
+
+            let original_title = pane.title.split(" | ").next().unwrap_or(&pane.title);
+            let cleaned_title = title_with_pinned_segments(original_title, &pane.title);
+            if cleaned_title != pane.title {
                 self.pending_pane_restores
-                    .insert(pane_ref, entry.original_title);
+                    .insert(pane_ref_from_pane_info(pane), cleaned_title);
                 set_timer = true;
             }
         }
+
         set_timer
     }
 
-    fn take_temp_tabs_on_focus(&mut self, _focused: &[usize]) -> bool {
-        let to_restore: Vec<usize> = self
-            .tab_entries
-            .iter()
-            .filter(|(_, entry)| entry.mode == Mode::Temp)
-            .map(|(tab_index, _)| *tab_index)
-            .collect();
-
+    fn clean_focused_tabs_on_focus(&mut self, tab_infos: &[TabInfo]) -> bool {
         let mut set_timer = false;
-        for tab_index in to_restore {
-            if let Some(entry) = self.tab_entries.remove(&tab_index) {
+
+        for tab in tab_infos {
+            if !tab.active {
+                continue;
+            }
+
+            let original_title = tab.name.split(" | ").next().unwrap_or(&tab.name);
+            let cleaned_title = title_with_pinned_segments(original_title, &tab.name);
+            if cleaned_title != tab.name {
                 self.pending_tab_restores
-                    .insert(tab_index, entry.original_title);
+                    .insert(tab.position, cleaned_title);
                 set_timer = true;
             }
         }
+
         set_timer
     }
 
@@ -219,6 +253,25 @@ impl EmotitleState {
 
 pub fn title_with_emojis(original_title: &str, emojis: &str) -> String {
     format!("{original_title} | {emojis}")
+}
+
+pub fn title_with_pinned_segments(original_title: &str, current_title: &str) -> String {
+    let Some(rest) = current_title.strip_prefix(original_title) else {
+        return original_title.to_string();
+    };
+
+    let pinned_segments: Vec<String> = rest
+        .split(" | ")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty() && segment.starts_with('📌'))
+        .map(str::to_string)
+        .collect();
+
+    if pinned_segments.is_empty() {
+        original_title.to_string()
+    } else {
+        format!("{original_title} | {}", pinned_segments.join(" | "))
+    }
 }
 
 fn pane_ref_from_pane_info(pane_info: &PaneInfo) -> PaneRef {
@@ -402,6 +455,29 @@ mod tests {
     }
 
     #[test]
+    fn pane_focus_keeps_only_pinned_segments() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "📌🚀".to_string(),
+            Mode::Permanent,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(0, vec![pane_info(10, false, true, "bash | 📚 | 📌🚀 | 🚗")]);
+
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
+
+        assert!(set_timer);
+        let restored = state.take_pending_pane_restores();
+        assert_eq!(
+            restored,
+            vec![(PaneRef::Terminal(10), "bash | 📌🚀".to_string())]
+        );
+    }
+
+    #[test]
     fn temp_tab_is_restored_when_it_gets_focus() {
         let mut state = EmotitleState::default();
         state.upsert_tab_entry(2, "build".to_string(), "✅".to_string(), Mode::Temp);
@@ -454,6 +530,18 @@ mod tests {
 
         let restored = state.take_pending_tab_restores();
         assert_eq!(restored, vec![(2, "build".to_string())]);
+    }
+
+    #[test]
+    fn tab_focus_keeps_only_pinned_segments() {
+        let mut state = EmotitleState::default();
+        state.upsert_tab_entry(1, "main".to_string(), "📌✅".to_string(), Mode::Permanent);
+
+        let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main | 🔔 | 📌✅ | 📚")]);
+
+        assert!(set_timer);
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored, vec![(1, "main | 📌✅".to_string())]);
     }
 
     #[test]

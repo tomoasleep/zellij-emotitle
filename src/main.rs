@@ -40,16 +40,7 @@ impl ZellijPlugin for PluginState {
                     set_timeout(1.0);
                 }
             }
-            Event::Timer(_seconds) => {
-                let pane_restores = self.state.take_pending_pane_restores();
-                for (pane_ref, original_title) in pane_restores {
-                    rename_pane(&pane_ref, original_title);
-                }
-                let tab_restores = self.state.take_pending_tab_restores();
-                for (tab_index, original_title) in tab_restores {
-                    rename_tab((tab_index + 1) as u32, original_title);
-                }
-            }
+            Event::Timer(_seconds) => self.apply_pending_restores(),
             _ => {}
         }
         false
@@ -77,6 +68,18 @@ impl ZellijPlugin for PluginState {
 }
 
 impl PluginState {
+    fn apply_pending_restores(&mut self) {
+        let pane_restores = self.state.take_pending_pane_restores();
+        for (pane_ref, original_title) in pane_restores {
+            rename_pane(&pane_ref, original_title);
+        }
+
+        let tab_restores = self.state.take_pending_tab_restores();
+        for (tab_index, original_title) in tab_restores {
+            rename_tab((tab_index + 1) as u32, original_title);
+        }
+    }
+
     fn handle_command(&mut self, command: Command) -> Result<(), String> {
         match command.target {
             Target::Pane { pane_id } => {
@@ -110,39 +113,69 @@ impl PluginState {
     }
 
     fn apply_pane(&mut self, pane_ref: PaneRef, emojis: String, mode: Mode) -> Result<(), String> {
+        let base_title = self
+            .state
+            .pane_effective_title(&pane_ref)
+            .or_else(|| self.state.pane_title(&pane_ref))
+            .ok_or_else(|| {
+                "could not find pane title; ensure plugin is loaded and received PaneUpdate"
+                    .to_string()
+            })?;
         let original_title = self
             .state
-            .pane_title(&pane_ref)
-            .or_else(|| self.state.pane_original_title(&pane_ref))
+            .pane_original_title(&pane_ref)
+            .or_else(|| self.state.pane_title(&pane_ref))
             .ok_or_else(|| {
                 "could not find pane title; ensure plugin is loaded and received PaneUpdate"
                     .to_string()
             })?;
 
-        let new_title = title_with_emojis(&original_title, &emojis);
-        rename_pane(&pane_ref, new_title);
-        self.state
-            .upsert_pane_entry(pane_ref, original_title, emojis, mode);
+        let new_title = title_with_emojis(&base_title, &emojis);
+        let stored_emojis = emojis_suffix(&original_title, &new_title);
+        rename_pane(&pane_ref, new_title.clone());
+        self.state.upsert_pane_entry(
+            pane_ref.clone(),
+            original_title.clone(),
+            stored_emojis,
+            mode,
+        );
         Ok(())
     }
 
     fn apply_tab(&mut self, tab_index: usize, emojis: String, mode: Mode) -> Result<(), String> {
+        let base_title = self
+            .state
+            .tab_effective_title(tab_index)
+            .or_else(|| self.state.tab_title(tab_index))
+            .ok_or_else(|| {
+                format!(
+                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate"
+                )
+            })?;
         let original_title = self
             .state
-            .tab_title(tab_index)
-            .or_else(|| self.state.tab_original_title(tab_index))
+            .tab_original_title(tab_index)
+            .or_else(|| self.state.tab_title(tab_index))
             .ok_or_else(|| {
                 format!(
                     "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate"
                 )
             })?;
 
-        let new_title = title_with_emojis(&original_title, &emojis);
-        rename_tab((tab_index + 1) as u32, new_title);
+        let new_title = title_with_emojis(&base_title, &emojis);
+        let stored_emojis = emojis_suffix(&original_title, &new_title);
+        rename_tab((tab_index + 1) as u32, new_title.clone());
         self.state
-            .upsert_tab_entry(tab_index, original_title, emojis, mode);
+            .upsert_tab_entry(tab_index, original_title.clone(), stored_emojis, mode);
         Ok(())
     }
+}
+
+fn emojis_suffix(original_title: &str, title: &str) -> String {
+    title
+        .strip_prefix(&format!("{original_title} | "))
+        .unwrap_or("")
+        .to_string()
 }
 
 fn rename_pane(pane_ref: &PaneRef, title: String) {
