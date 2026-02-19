@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::command::Mode;
 use zellij_tile::prelude::{PaneInfo, PaneManifest, TabInfo};
@@ -27,6 +27,19 @@ pub struct EmotitleState {
 
 impl EmotitleState {
     pub fn update_pane_manifest(&mut self, pane_manifest: PaneManifest) -> bool {
+        let current_panes: HashSet<PaneRef> = pane_manifest
+            .panes
+            .values()
+            .flat_map(|panes| panes.iter())
+            .map(pane_ref_from_pane_info)
+            .collect();
+
+        self.pane_entries
+            .retain(|pane_ref, _| current_panes.contains(pane_ref));
+
+        self.pending_pane_restores
+            .retain(|pane_ref, _| current_panes.contains(pane_ref));
+
         self.pane_manifest = Some(pane_manifest.clone());
         let focused: Vec<PaneRef> = pane_manifest
             .panes
@@ -39,6 +52,14 @@ impl EmotitleState {
     }
 
     pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> bool {
+        let current_tabs: HashSet<usize> = tab_infos.iter().map(|tab| tab.position).collect();
+
+        self.tab_entries
+            .retain(|tab_index, _| current_tabs.contains(tab_index));
+
+        self.pending_tab_restores
+            .retain(|tab_index, _| current_tabs.contains(tab_index));
+
         self.tab_infos = tab_infos.clone();
         let focused: Vec<usize> = tab_infos
             .iter()
@@ -318,5 +339,74 @@ mod tests {
 
         let restored = state.take_pending_tab_restores();
         assert_eq!(restored, vec![(2, "build".to_string())]);
+    }
+
+    #[test]
+    fn deleted_pane_entry_is_removed_on_manifest_update() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "🚀".to_string(),
+            Mode::Permanent,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(0, vec![pane_info(10, false, false, "bash | 🚀")]);
+        state.update_pane_manifest(PaneManifest {
+            panes: panes.clone(),
+        });
+
+        assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_some());
+
+        let mut panes_after_delete = HashMap::new();
+        panes_after_delete.insert(0, vec![pane_info(20, false, true, "zsh")]);
+        state.update_pane_manifest(PaneManifest {
+            panes: panes_after_delete,
+        });
+
+        assert!(
+            state.pane_original_title(&PaneRef::Terminal(10)).is_none(),
+            "deleted pane entry should be removed from pane_entries"
+        );
+    }
+
+    #[test]
+    fn other_pane_entry_is_preserved_when_pane_is_deleted() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "🚀".to_string(),
+            Mode::Permanent,
+        );
+        state.upsert_pane_entry(
+            PaneRef::Terminal(20),
+            "vim".to_string(),
+            "📚".to_string(),
+            Mode::Permanent,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            vec![
+                pane_info(10, false, false, "bash | 🚀"),
+                pane_info(20, false, true, "vim | 📚"),
+            ],
+        );
+        state.update_pane_manifest(PaneManifest { panes });
+
+        let mut panes_after_delete = HashMap::new();
+        panes_after_delete.insert(0, vec![pane_info(20, false, true, "vim | 📚")]);
+        state.update_pane_manifest(PaneManifest {
+            panes: panes_after_delete,
+        });
+
+        assert!(state.pane_original_title(&PaneRef::Terminal(20)).is_some());
+        assert!(
+            state.pane_original_title(&PaneRef::Terminal(10)).is_none(),
+            "deleted pane entry should be removed"
+        );
     }
 }
