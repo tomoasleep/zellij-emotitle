@@ -70,7 +70,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -116,7 +116,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -177,7 +177,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -238,7 +238,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -295,7 +295,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -350,7 +350,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -401,7 +401,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -452,7 +452,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -504,7 +504,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -555,7 +555,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -610,7 +610,7 @@ describe("emotitle plugin e2e", () => {
 
       await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
-      await sleep(3000);
+      await sleep(5000);
 
       await session.press("esc");
       await sleep(200);
@@ -625,6 +625,59 @@ describe("emotitle plugin e2e", () => {
 
       text = await session.text();
       expect(text).not.toContain("🛼");
+    } finally {
+      try {
+        deleteSession(sessionName);
+      } catch {}
+      session.close();
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
+    }
+  }, 60000);
+
+  test("should not resurrect previous temp emojis after timer cleanup on focused pane", async () => {
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
+    const sessionName = `emotitle-test-${Date.now()}`;
+
+    const session = await launchTerminal({
+      command: "bash",
+      args: [],
+      cols: 140,
+      rows: 35,
+      env: cleanEnv(cacheDir),
+    });
+
+    try {
+      await sleep(300);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
+      await session.press("enter");
+      await sleep(5000);
+
+      await session.press("esc");
+      await sleep(200);
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📚");
+      await sleep(1300);
+
+      let text = await session.text();
+      expect(text).not.toContain("📚");
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=✅");
+      await sleep(300);
+
+      text = await session.text();
+      expect(text).toContain("✅");
+      expect(text).not.toContain("📚");
     } finally {
       try {
         deleteSession(sessionName);

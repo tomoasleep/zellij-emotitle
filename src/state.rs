@@ -210,11 +210,31 @@ impl EmotitleState {
                 continue;
             }
 
-            let original_title = pane.title.split(" | ").next().unwrap_or(&pane.title);
+            let pane_ref = pane_ref_from_pane_info(pane);
+            let original_title = self
+                .pane_entries
+                .get(&pane_ref)
+                .map(|entry| entry.original_title.as_str())
+                .unwrap_or_else(|| pane.title.split(" | ").next().unwrap_or(&pane.title));
             let cleaned_title = title_with_pinned_segments(original_title, &pane.title);
+
+            if pane.title != original_title {
+                let mut remove_entry = false;
+                if let Some(entry) = self.pane_entries.get_mut(&pane_ref) {
+                    let suffix = emojis_suffix_from_title(&entry.original_title, &cleaned_title);
+                    if suffix.is_empty() {
+                        remove_entry = true;
+                    } else {
+                        entry.emojis = suffix;
+                    }
+                }
+                if remove_entry {
+                    self.pane_entries.remove(&pane_ref);
+                }
+            }
+
             if cleaned_title != pane.title {
-                self.pending_pane_restores
-                    .insert(pane_ref_from_pane_info(pane), cleaned_title);
+                self.pending_pane_restores.insert(pane_ref, cleaned_title);
                 set_timer = true;
             }
         }
@@ -230,8 +250,28 @@ impl EmotitleState {
                 continue;
             }
 
-            let original_title = tab.name.split(" | ").next().unwrap_or(&tab.name);
+            let original_title = self
+                .tab_entries
+                .get(&tab.position)
+                .map(|entry| entry.original_title.as_str())
+                .unwrap_or_else(|| tab.name.split(" | ").next().unwrap_or(&tab.name));
             let cleaned_title = title_with_pinned_segments(original_title, &tab.name);
+
+            if tab.name != original_title {
+                let mut remove_entry = false;
+                if let Some(entry) = self.tab_entries.get_mut(&tab.position) {
+                    let suffix = emojis_suffix_from_title(&entry.original_title, &cleaned_title);
+                    if suffix.is_empty() {
+                        remove_entry = true;
+                    } else {
+                        entry.emojis = suffix;
+                    }
+                }
+                if remove_entry {
+                    self.tab_entries.remove(&tab.position);
+                }
+            }
+
             if cleaned_title != tab.name {
                 self.pending_tab_restores
                     .insert(tab.position, cleaned_title);
@@ -253,6 +293,13 @@ impl EmotitleState {
 
 pub fn title_with_emojis(original_title: &str, emojis: &str) -> String {
     format!("{original_title} | {emojis}")
+}
+
+fn emojis_suffix_from_title(original_title: &str, title: &str) -> String {
+    title
+        .strip_prefix(&format!("{original_title} | "))
+        .unwrap_or("")
+        .to_string()
 }
 
 pub fn title_with_pinned_segments(original_title: &str, current_title: &str) -> String {
@@ -542,6 +589,79 @@ mod tests {
         assert!(set_timer);
         let restored = state.take_pending_tab_restores();
         assert_eq!(restored, vec![(1, "main | 📌✅".to_string())]);
+    }
+
+    #[test]
+    fn pane_entry_is_cleared_after_focus_cleanup_without_pinned_segments() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "📚".to_string(),
+            Mode::Temp,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(0, vec![pane_info(10, false, true, "bash")]);
+
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
+
+        assert!(!set_timer);
+        assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_none());
+        assert_eq!(
+            state.pane_effective_title(&PaneRef::Terminal(10)),
+            Some("bash".to_string())
+        );
+    }
+
+    #[test]
+    fn tab_entry_is_cleared_after_focus_cleanup_without_pinned_segments() {
+        let mut state = EmotitleState::default();
+        state.upsert_tab_entry(1, "main".to_string(), "📚".to_string(), Mode::Temp);
+
+        let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main")]);
+
+        assert!(!set_timer);
+        assert!(state.tab_original_title(1).is_none());
+        assert_eq!(state.tab_effective_title(1), Some("main".to_string()));
+    }
+
+    #[test]
+    fn pane_entry_is_preserved_when_focused_title_is_still_original() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "📌🚀".to_string(),
+            Mode::Permanent,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(0, vec![pane_info(10, false, true, "bash")]);
+
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
+
+        assert!(!set_timer);
+        assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_some());
+        assert_eq!(
+            state.pane_effective_title(&PaneRef::Terminal(10)),
+            Some("bash | 📌🚀".to_string())
+        );
+    }
+
+    #[test]
+    fn tab_entry_is_preserved_when_focused_title_is_still_original() {
+        let mut state = EmotitleState::default();
+        state.upsert_tab_entry(1, "main".to_string(), "📌🚀".to_string(), Mode::Permanent);
+
+        let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main")]);
+
+        assert!(!set_timer);
+        assert!(state.tab_original_title(1).is_some());
+        assert_eq!(
+            state.tab_effective_title(1),
+            Some("main | 📌🚀".to_string())
+        );
     }
 
     #[test]
