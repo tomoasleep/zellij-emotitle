@@ -62,11 +62,7 @@ pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
         return Err("emojis must not be empty".to_string());
     }
 
-    let mode = match args.get("mode").map(|m| m.as_str()).unwrap_or("temp") {
-        "temp" => Mode::Temp,
-        "permanent" => Mode::Permanent,
-        other => return Err(format!("unsupported mode: {other}")),
-    };
+    let mode = mode_from_emojis(&emojis);
 
     let command_target = match target.as_str() {
         "pane" => {
@@ -94,6 +90,14 @@ pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
         emojis,
         mode,
     })
+}
+
+fn mode_from_emojis(emojis: &str) -> Mode {
+    if emojis.starts_with('📌') {
+        Mode::Permanent
+    } else {
+        Mode::Temp
+    }
 }
 
 fn parse_optional_u32(value: Option<&String>, key: &str) -> Result<Option<u32>, String> {
@@ -165,7 +169,7 @@ mod tests {
 
     #[test]
     fn parse_pane_temp_command() {
-        let args = map(&[("target", "pane"), ("emojis", "🚀"), ("mode", "temp")]);
+        let args = map(&[("target", "pane"), ("emojis", "🚀")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,
@@ -178,13 +182,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_with_pin_prefix_is_permanent() {
+        let args = map(&[("target", "pane"), ("emojis", "📌🚀")]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Pane { pane_id: None },
+                emojis: "📌🚀".to_string(),
+                mode: Mode::Permanent,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_command_without_pin_is_temp() {
+        let args = map(&[("target", "pane"), ("emojis", "🚀")]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(cmd.mode, Mode::Temp);
+    }
+
+    #[test]
+    fn parse_command_with_pin_and_multiple_emojis() {
+        let args = map(&[("target", "pane"), ("emojis", "📌🚀📚")]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(cmd.mode, Mode::Permanent);
+    }
+
+    #[test]
+    fn parse_command_with_mode_arg_fails() {
+        let args = map(&[("target", "pane"), ("emojis", "🚀"), ("mode", "temp")]);
+        assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
     fn parse_tab_command_with_pane_id() {
-        let args = map(&[
-            ("target", "tab"),
-            ("pane_id", "77"),
-            ("emojis", "📚"),
-            ("mode", "permanent"),
-        ]);
+        let args = map(&[("target", "tab"), ("pane_id", "77"), ("emojis", "📌📚")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,
@@ -193,7 +226,7 @@ mod tests {
                     tab_index: None,
                     pane_id: Some(77),
                 },
-                emojis: "📚".to_string(),
+                emojis: "📌📚".to_string(),
                 mode: Mode::Permanent,
             }
         );
@@ -212,7 +245,7 @@ mod tests {
 
     #[test]
     fn parse_command_with_colon_emoji() {
-        let args = map(&[("target", "pane"), ("emojis", ":rocket:"), ("mode", "temp")]);
+        let args = map(&[("target", "pane"), ("emojis", ":rocket:")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,
@@ -226,29 +259,21 @@ mod tests {
 
     #[test]
     fn parse_command_with_multiple_colon_emojis() {
-        let args = map(&[
-            ("target", "pane"),
-            ("emojis", ":rocket::book:"),
-            ("mode", "permanent"),
-        ]);
+        let args = map(&[("target", "pane"), ("emojis", ":rocket::book:")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,
             Command {
                 target: Target::Pane { pane_id: None },
                 emojis: "🚀📚".to_string(),
-                mode: Mode::Permanent,
+                mode: Mode::Temp,
             }
         );
     }
 
     #[test]
     fn parse_command_with_unknown_colon_emoji() {
-        let args = map(&[
-            ("target", "pane"),
-            ("emojis", ":unknown:"),
-            ("mode", "temp"),
-        ]);
+        let args = map(&[("target", "pane"), ("emojis", ":unknown:")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,
@@ -262,11 +287,7 @@ mod tests {
 
     #[test]
     fn parse_command_with_mixed_emojis() {
-        let args = map(&[
-            ("target", "pane"),
-            ("emojis", "🚀:rocket:"),
-            ("mode", "temp"),
-        ]);
+        let args = map(&[("target", "pane"), ("emojis", "🚀:rocket:")]);
         let cmd = parse_args(&args).unwrap();
         assert_eq!(
             cmd,

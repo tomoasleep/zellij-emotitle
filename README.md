@@ -3,8 +3,8 @@
 Zellij の pane / tab タイトルに `(<original title>) | (<emojis>)` の形式で emoji を付与するプラグインです。
 
 - 付与は `zellij pipe` で実行
-- temporary (`mode=temp`) は対象がフォーカスされたタイミングで元に戻す
-- permanent (`mode=permanent`) は維持
+- `emojis` の先頭に `📌` を含めると permanent（永続化）
+- それ以外は temporary（フォーカスされたタイミングで元に戻す）
 - `pane_id` から `tab_index` を解決して tab に付与可能
 
 ## ビルド
@@ -36,7 +36,8 @@ load_plugins {
 
 - `target`: `pane` または `tab` (必須)
 - `emojis`: 付与する絵文字 (必須) - gemoji の shortcode (`:rocket:`) も使用可能
-- `mode`: `temp` or `permanent` (省略時 `temp`)
+  - `emojis` の先頭に `📌` を含めると permanent（永続化）
+  - それ以外は temporary（フォーカス時に削除）
 - `pane_id`: pane id (任意)
 - `tab_index`: tab index (0-based, 任意)
 
@@ -44,40 +45,40 @@ load_plugins {
 
 ## 使い方
 
-### 1) フォーカス中の pane に付与
+### 1) フォーカス中の pane に一時的に付与
 
 ```bash
 zellij pipe \
   --name emotitle \
   --plugin file:/ABSOLUTE/PATH/TO/zellij_emotitle.wasm \
-  --args target=pane,emojis=🚀,mode=temp
+  --args target=pane,emojis=🚀
 ```
 
-### 2) 指定 pane_id に付与
+### 2) 指定 pane_id に永続的に付与
 
 ```bash
 zellij pipe \
   --name emotitle \
   --plugin file:/ABSOLUTE/PATH/TO/zellij_emotitle.wasm \
-  --args target=pane,pane_id=12,emojis=✅,mode=permanent
+  --args target=pane,pane_id=12,emojis=📌✅
 ```
 
-### 3) フォーカス中の tab に付与
+### 3) フォーカス中の tab に一時的に付与
 
 ```bash
 zellij pipe \
   --name emotitle \
   --plugin file:/ABSOLUTE/PATH/TO/zellij_emotitle.wasm \
-  --args target=tab,emojis=📚,mode=temp
+  --args target=tab,emojis=📚
 ```
 
-### 4) pane_id から tab を解決して付与
+### 4) pane_id から tab を解決して永続的に付与
 
 ```bash
 zellij pipe \
   --name emotitle \
   --plugin file:/ABSOLUTE/PATH/TO/zellij_emotitle.wasm \
-  --args target=tab,pane_id=12,emojis=🔥,mode=permanent
+  --args target=tab,pane_id=12,emojis=📌🔥
 ```
 
 ## ZELLIJ_PANE_ID / ZELLIJ_SESSION_NAME だけで tab を特定する
@@ -88,7 +89,7 @@ zellij pipe \
 zellij --session "$ZELLIJ_SESSION_NAME" pipe \
   --name emotitle \
   --plugin file:/ABSOLUTE/PATH/TO/zellij_emotitle.wasm \
-  --args target=tab,pane_id=$ZELLIJ_PANE_ID,emojis=🔔,mode=temp
+  --args target=tab,pane_id=$ZELLIJ_PANE_ID,emojis=🔔
 ```
 
 このときプラグイン側で `pane_id -> tab_index` を `PaneUpdate` 情報から解決します。

@@ -170,12 +170,11 @@ impl EmotitleState {
             .map(|entry| entry.original_title.clone())
     }
 
-    fn take_temp_panes_on_focus(&mut self, focused: &[PaneRef]) -> bool {
-        let focused_set: std::collections::HashSet<PaneRef> = focused.iter().cloned().collect();
+    fn take_temp_panes_on_focus(&mut self, _focused: &[PaneRef]) -> bool {
         let to_restore: Vec<PaneRef> = self
             .pane_entries
             .iter()
-            .filter(|(pane_ref, entry)| entry.mode == Mode::Temp && focused_set.contains(*pane_ref))
+            .filter(|(_, entry)| entry.mode == Mode::Temp)
             .map(|(pane_ref, _)| pane_ref.clone())
             .collect();
 
@@ -190,14 +189,11 @@ impl EmotitleState {
         set_timer
     }
 
-    fn take_temp_tabs_on_focus(&mut self, focused: &[usize]) -> bool {
-        let focused_set: std::collections::HashSet<usize> = focused.iter().copied().collect();
+    fn take_temp_tabs_on_focus(&mut self, _focused: &[usize]) -> bool {
         let to_restore: Vec<usize> = self
             .tab_entries
             .iter()
-            .filter(|(tab_index, entry)| {
-                entry.mode == Mode::Temp && focused_set.contains(tab_index)
-            })
+            .filter(|(_, entry)| entry.mode == Mode::Temp)
             .map(|(tab_index, _)| *tab_index)
             .collect();
 
@@ -328,6 +324,84 @@ mod tests {
     }
 
     #[test]
+    fn all_temp_panes_are_restored_on_focus() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "🚀".to_string(),
+            Mode::Temp,
+        );
+        state.upsert_pane_entry(
+            PaneRef::Terminal(20),
+            "vim".to_string(),
+            "📚".to_string(),
+            Mode::Temp,
+        );
+        state.upsert_pane_entry(
+            PaneRef::Terminal(30),
+            "zsh".to_string(),
+            "🔥".to_string(),
+            Mode::Permanent,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            vec![
+                pane_info(10, false, true, "bash | 🚀"),
+                pane_info(20, false, false, "vim | 📚"),
+                pane_info(30, false, false, "zsh | 🔥"),
+            ],
+        );
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
+
+        assert!(set_timer);
+        assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_none());
+        assert!(state.pane_original_title(&PaneRef::Terminal(20)).is_none());
+        assert!(state.pane_original_title(&PaneRef::Terminal(30)).is_some());
+
+        let restored = state.take_pending_pane_restores();
+        assert_eq!(restored.len(), 2, "should restore both temp panes");
+        assert!(restored.iter().any(|(p, _)| *p == PaneRef::Terminal(10)));
+        assert!(restored.iter().any(|(p, _)| *p == PaneRef::Terminal(20)));
+    }
+
+    #[test]
+    fn permanent_panes_preserved_on_focus() {
+        let mut state = EmotitleState::default();
+        state.upsert_pane_entry(
+            PaneRef::Terminal(10),
+            "bash".to_string(),
+            "📌🚀".to_string(),
+            Mode::Permanent,
+        );
+        state.upsert_pane_entry(
+            PaneRef::Terminal(20),
+            "vim".to_string(),
+            "📚".to_string(),
+            Mode::Temp,
+        );
+
+        let mut panes = HashMap::new();
+        panes.insert(
+            0,
+            vec![
+                pane_info(10, false, true, "bash | 📌🚀"),
+                pane_info(20, false, false, "vim | 📚"),
+            ],
+        );
+        let set_timer = state.update_pane_manifest(PaneManifest { panes });
+
+        assert!(set_timer);
+        assert!(state.pane_original_title(&PaneRef::Terminal(10)).is_some());
+        assert!(state.pane_original_title(&PaneRef::Terminal(20)).is_none());
+
+        let restored = state.take_pending_pane_restores();
+        assert_eq!(restored, vec![(PaneRef::Terminal(20), "vim".to_string())]);
+    }
+
+    #[test]
     fn temp_tab_is_restored_when_it_gets_focus() {
         let mut state = EmotitleState::default();
         state.upsert_tab_entry(2, "build".to_string(), "✅".to_string(), Mode::Temp);
@@ -335,6 +409,47 @@ mod tests {
         let set_timer = state.update_tab_infos(vec![tab_info(2, true, "build | ✅")]);
 
         assert!(set_timer);
+        assert!(state.tab_original_title(2).is_none());
+
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored, vec![(2, "build".to_string())]);
+    }
+
+    #[test]
+    fn all_temp_tabs_are_restored_on_focus() {
+        let mut state = EmotitleState::default();
+        state.upsert_tab_entry(1, "main".to_string(), "🚀".to_string(), Mode::Temp);
+        state.upsert_tab_entry(2, "build".to_string(), "📚".to_string(), Mode::Temp);
+        state.upsert_tab_entry(3, "test".to_string(), "📌✅".to_string(), Mode::Permanent);
+
+        let set_timer = state.update_tab_infos(vec![
+            tab_info(1, true, "main | 🚀"),
+            tab_info(2, false, "build | 📚"),
+            tab_info(3, false, "test | 📌✅"),
+        ]);
+
+        assert!(set_timer);
+        assert!(state.tab_original_title(1).is_none());
+        assert!(state.tab_original_title(2).is_none());
+        assert!(state.tab_original_title(3).is_some());
+
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored.len(), 2);
+    }
+
+    #[test]
+    fn permanent_tabs_preserved_on_focus() {
+        let mut state = EmotitleState::default();
+        state.upsert_tab_entry(1, "main".to_string(), "📌🚀".to_string(), Mode::Permanent);
+        state.upsert_tab_entry(2, "build".to_string(), "📚".to_string(), Mode::Temp);
+
+        let set_timer = state.update_tab_infos(vec![
+            tab_info(1, true, "main | 📌🚀"),
+            tab_info(2, false, "build | 📚"),
+        ]);
+
+        assert!(set_timer);
+        assert!(state.tab_original_title(1).is_some());
         assert!(state.tab_original_title(2).is_none());
 
         let restored = state.take_pending_tab_restores();

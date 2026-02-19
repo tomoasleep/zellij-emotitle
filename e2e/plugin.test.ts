@@ -1,73 +1,49 @@
-import { test, expect, beforeAll, afterAll, describe, beforeEach } from "bun:test";
-import { launchTerminal, type TerminalSession } from "tuistory";
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { test, expect, describe } from "bun:test";
+import { launchTerminal } from "tuistory";
 
-const WASM_PATH = process.cwd() + "/../target/wasm32-wasip1/release/zellij-emotitle.wasm";
+import {
+  WASM_PATH,
+  setupConfigDir,
+  setupCacheDir,
+  cleanEnv,
+  cleanupConfigDir,
+  cleanupCacheDir,
+  zellijAction,
+  deleteSession,
+  sleep,
+} from "./test-helpers";
 
-function setupConfigDir(): string {
-  const dir = join(tmpdir(), `zellij-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(dir, { recursive: true });
-  mkdirSync(join(dir, "layouts"), { recursive: true });
-  
-  writeFileSync(join(dir, "config.kdl"), `
-keybinds {
-    normal {}
-}
-
-load_plugins {
-    file "${WASM_PATH}"
-}
-  `);
-  writeFileSync(join(dir, "layouts", "default.kdl"), `
-layout {
-    pane size=1 split_direction="Vertical" borderless=true {
-        plugin location="tab-bar"
-    }
-    pane
-    pane size=1 borderless=true {
-        plugin location="status-bar"
-    }
-}
-  `);
-  return dir;
-}
-
-function setupCacheDir(): string {
-  const dir = join(tmpdir(), `zellij-cache-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(dir, { recursive: true });
-  
-  writeFileSync(join(dir, "permissions.kdl"), `"${WASM_PATH}" {
-    ChangeApplicationState
-    ReadApplicationState
-}
-`);
-  
-  return dir;
-}
-
-function cleanEnv(cacheDir: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("ZELLIJ")) {
-      env[key] = value;
-    }
-  }
-  env["ZELLIJ_CACHE_DIR"] = cacheDir;
-  return env;
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms));
+function runPipe(configDir: string, cacheDir: string, sessionName: string, args: string): Promise<void> {
+  const proc = Bun.spawn(
+    [
+      "zellij",
+      "--config-dir",
+      configDir,
+      "--session",
+      sessionName,
+      "pipe",
+      "--name",
+      "emotitle",
+      "--plugin",
+      `file:${WASM_PATH}`,
+      "--args",
+      args,
+      "--",
+      "",
+    ],
+    {
+      env: cleanEnv(cacheDir),
+    },
+  );
+  return proc.exited.then(() => {});
 }
 
 describe("pane deletion emoji behavior (plugin)", () => {
   test("plugin pipe works", async () => {
-    const configDir = setupConfigDir();
-    const cacheDir = setupCacheDir();
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
     const sessionName = `emotitle-test-${Date.now()}`;
-    
+
     const session = await launchTerminal({
       command: "bash",
       args: [],
@@ -75,50 +51,45 @@ describe("pane deletion emoji behavior (plugin)", () => {
       rows: 35,
       env: cleanEnv(cacheDir),
     });
-    
+
     try {
       await sleep(300);
-      
-      await session.type(`unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME`);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
       await session.press("enter");
       await sleep(100);
-      
+
       await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
       await session.press("enter");
       await sleep(100);
-      
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName}`);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
       await sleep(3000);
-      
+
       await session.press("esc");
       await sleep(200);
-      
-      // Pipe emoji
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin file:${WASM_PATH} --args target=pane,emojis=🚀,mode=permanent -- ""`);
-      await session.press("enter");
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🚀");
       await sleep(500);
-      
+
       const text = await session.text();
-      expect(text).toContain("🚀");
+      expect(text).toContain("📌🚀");
     } finally {
       try {
-        Bun.spawnSync(["zellij", "--config-dir", configDir, "--session", sessionName, "kill-session"], { 
-          timeout: 5000,
-          env: cleanEnv(cacheDir),
-        });
+        deleteSession(sessionName);
       } catch {}
       session.close();
-      rmSync(configDir, { recursive: true, force: true });
-      rmSync(cacheDir, { recursive: true, force: true });
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
     }
   }, 30000);
 
   test("scenario A: pane deletion and emoji should not persist", async () => {
-    const configDir = setupConfigDir();
-    const cacheDir = setupCacheDir();
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
     const sessionName = `emotitle-test-${Date.now()}`;
-    
+
     const session = await launchTerminal({
       command: "bash",
       args: [],
@@ -126,63 +97,60 @@ describe("pane deletion emoji behavior (plugin)", () => {
       rows: 35,
       env: cleanEnv(cacheDir),
     });
-    
+
     try {
       await sleep(300);
-      
-      await session.type(`unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME`);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
       await session.press("enter");
       await sleep(100);
-      
+
       await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
       await session.press("enter");
       await sleep(100);
-      
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName}`);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
       await sleep(3000);
-      
+
       await session.press("esc");
       await sleep(200);
-      
-      // Add emoji via plugin
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin file:${WASM_PATH} --args target=pane,emojis=📚,mode=permanent -- ""`);
-      await session.press("enter");
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌📚");
       await sleep(500);
-      
+
       let text = await session.text();
-      expect(text).toContain("📚");
-      
-      // Close pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} action close-pane`);
-      await session.press("enter");
+      expect(text).toContain("📌📚");
+
+      zellijAction(configDir, cacheDir, sessionName, "new-pane");
       await sleep(500);
-      
-      // Create new pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} action new-pane`);
-      await session.press("enter");
+
+      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+      await sleep(300);
+
+      zellijAction(configDir, cacheDir, sessionName, "close-pane");
       await sleep(500);
-      
+
+      zellijAction(configDir, cacheDir, sessionName, "new-pane");
+      await sleep(500);
+
       text = await session.text();
-      expect(text).not.toContain("📚");
+      expect(text).not.toContain("📌📚");
     } finally {
       try {
-        Bun.spawnSync(["zellij", "--config-dir", configDir, "--session", sessionName, "kill-session"], { 
-          timeout: 5000,
-          env: cleanEnv(cacheDir),
-        });
+        deleteSession(sessionName);
       } catch {}
       session.close();
-      rmSync(configDir, { recursive: true, force: true });
-      rmSync(cacheDir, { recursive: true, force: true });
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
     }
   }, 30000);
 
   test("scenario B: other pane keeps emoji after pane deletion", async () => {
-    const configDir = setupConfigDir();
-    const cacheDir = setupCacheDir();
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
     const sessionName = `emotitle-test-${Date.now()}`;
-    
+
     const session = await launchTerminal({
       command: "bash",
       args: [],
@@ -190,65 +158,52 @@ describe("pane deletion emoji behavior (plugin)", () => {
       rows: 35,
       env: cleanEnv(cacheDir),
     });
-    
+
     try {
       await sleep(300);
-      
-      await session.type(`unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME`);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
       await session.press("enter");
       await sleep(100);
-      
+
       await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
       await session.press("enter");
       await sleep(100);
-      
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName}`);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
       await session.press("enter");
       await sleep(3000);
-      
+
       await session.press("esc");
       await sleep(200);
-      
-      // Add emoji to first pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin file:${WASM_PATH} --args target=pane,emojis=✅,mode=permanent -- ""`);
-      await session.press("enter");
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌✅");
       await sleep(500);
-      
-      // Create new pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} action new-pane`);
-      await session.press("enter");
+
+      zellijAction(configDir, cacheDir, sessionName, "new-pane");
       await sleep(500);
-      
-      // Add emoji to second pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin file:${WASM_PATH} --args target=pane,emojis=🎉,mode=permanent -- ""`);
-      await session.press("enter");
+
+      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🎉");
       await sleep(500);
-      
+
       let text = await session.text();
-      expect(text).toContain("🎉");
-      
-      // Close current pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} action close-pane`);
-      await session.press("enter");
+      expect(text).toContain("📌🎉");
+
+      zellijAction(configDir, cacheDir, sessionName, "close-pane");
       await sleep(500);
-      
-      // Focus previous pane
-      await session.type(`zellij --config-dir ${configDir} --session ${sessionName} action focus-previous-pane`);
-      await session.press("enter");
+
+      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
       await sleep(500);
-      
+
       text = await session.text();
-      expect(text).toContain("✅");
+      expect(text).toContain("📌✅");
     } finally {
       try {
-        Bun.spawnSync(["zellij", "--config-dir", configDir, "--session", sessionName, "kill-session"], { 
-          timeout: 5000,
-          env: cleanEnv(cacheDir),
-        });
+        deleteSession(sessionName);
       } catch {}
       session.close();
-      rmSync(configDir, { recursive: true, force: true });
-      rmSync(cacheDir, { recursive: true, force: true });
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
     }
   }, 45000);
 });
