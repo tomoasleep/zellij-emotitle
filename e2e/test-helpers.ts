@@ -106,6 +106,17 @@ export function zellijAction(configDir: string, cacheDir: string, sessionName: s
   }
 }
 
+export function queryTabNames(configDir: string, cacheDir: string, sessionName: string): string {
+  const result = Bun.spawnSync(
+    ["zellij", "--config-dir", configDir, "--session", sessionName, "action", "query-tab-names"],
+    { encoding: "utf-8", env: cleanEnv(cacheDir) },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(`zellij action query-tab-names failed: ${result.stderr}`);
+  }
+  return result.stdout.toString().trim();
+}
+
 export function deleteSession(sessionName: string): void {
   Bun.spawnSync(["zellij", "delete-session", "-f", sessionName], {
     timeout: 5000,

@@ -9,6 +9,7 @@ import {
   cleanupConfigDir,
   cleanupCacheDir,
   zellijAction,
+  queryTabNames,
   deleteSession,
   sleep,
 } from "./test-helpers";
@@ -574,6 +575,135 @@ describe("emotitle plugin e2e", () => {
       expect(text).toContain("📌🚀");
       expect(text).not.toContain("📌🚀 | 📚");
       expect(text).not.toContain("📚");
+    } finally {
+      try {
+        deleteSession(sessionName);
+      } catch {}
+      session.close();
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
+    }
+  }, 60000);
+
+  test("should not rename inserted tab after tab insertion shifts tracked tab index", async () => {
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
+    const sessionName = `emotitle-test-${Date.now()}`;
+
+    const session = await launchTerminal({
+      command: "bash",
+      args: [],
+      cols: 140,
+      rows: 35,
+      env: cleanEnv(cacheDir),
+    });
+
+    try {
+      await sleep(300);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
+      await session.press("enter");
+      await sleep(5000);
+
+      await session.press("esc");
+      await sleep(200);
+
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_A"]);
+      await sleep(300);
+
+      zellijAction(configDir, cacheDir, sessionName, "new-tab");
+      await sleep(700);
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_B"]);
+      await sleep(300);
+
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌📚");
+      await sleep(300);
+
+      zellijAction(configDir, cacheDir, sessionName, "new-tab");
+      await sleep(500);
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_C"]);
+      await sleep(300);
+      zellijAction(configDir, cacheDir, sessionName, "move-tab", ["left"]);
+      await sleep(1300);
+
+      const tabNames = queryTabNames(configDir, cacheDir, sessionName);
+      expect(tabNames).toContain("TAB_C");
+      expect(tabNames).not.toContain("TAB_B TAB_B");
+      expect(tabNames).not.toContain("TAB_B | 📌📚 TAB_B");
+    } finally {
+      try {
+        deleteSession(sessionName);
+      } catch {}
+      session.close();
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
+    }
+  }, 60000);
+
+  test("should keep tab names aligned after deleting tab before tracked tab", async () => {
+    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
+    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
+    const sessionName = `emotitle-test-${Date.now()}`;
+
+    const session = await launchTerminal({
+      command: "bash",
+      args: [],
+      cols: 140,
+      rows: 35,
+      env: cleanEnv(cacheDir),
+    });
+
+    try {
+      await sleep(300);
+
+      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
+      await session.press("enter");
+      await sleep(100);
+
+      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
+      await session.press("enter");
+      await sleep(5000);
+
+      await session.press("esc");
+      await sleep(200);
+
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_A"]);
+      await sleep(300);
+
+      zellijAction(configDir, cacheDir, sessionName, "new-tab");
+      await sleep(700);
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_B"]);
+      await sleep(300);
+
+      zellijAction(configDir, cacheDir, sessionName, "new-tab");
+      await sleep(700);
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_C"]);
+      await sleep(300);
+
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌📚");
+      await sleep(250);
+
+      zellijAction(configDir, cacheDir, sessionName, "go-to-tab", ["2"]);
+      await sleep(300);
+      zellijAction(configDir, cacheDir, sessionName, "close-tab");
+      await sleep(700);
+
+      const tabNames = queryTabNames(configDir, cacheDir, sessionName);
+      expect(tabNames).toContain("TAB_A");
+      expect(tabNames).toContain("TAB_C");
+      expect(tabNames).toContain("TAB_C | 📌📚");
     } finally {
       try {
         deleteSession(sessionName);

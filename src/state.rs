@@ -15,14 +15,26 @@ pub struct Entry {
     pub emojis: String,
 }
 
+#[derive(Debug, Clone)]
+struct TabEntry {
+    entry: Entry,
+    anchor_pane_id: u32,
+}
+
+#[derive(Debug, Clone)]
+struct PendingTabRestore {
+    title: String,
+    anchor_pane_id: u32,
+}
+
 #[derive(Default)]
 pub struct EmotitleState {
     pub pane_manifest: Option<PaneManifest>,
     pub tab_infos: Vec<TabInfo>,
     pane_entries: HashMap<PaneRef, Entry>,
-    tab_entries: HashMap<usize, Entry>,
+    tab_entries: HashMap<usize, TabEntry>,
     pending_pane_restores: HashMap<PaneRef, String>,
-    pending_tab_restores: HashMap<usize, String>,
+    pending_tab_restores: HashMap<usize, PendingTabRestore>,
 }
 
 impl EmotitleState {
@@ -40,6 +52,8 @@ impl EmotitleState {
         self.pending_pane_restores
             .retain(|pane_ref, _| current_panes.contains(pane_ref));
 
+        self.remap_tab_state_with_manifest(&pane_manifest);
+
         self.pane_manifest = Some(pane_manifest.clone());
         let focused: Vec<PaneRef> = pane_manifest
             .panes
@@ -54,6 +68,10 @@ impl EmotitleState {
     }
 
     pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> bool {
+        if let Some(manifest) = self.pane_manifest.clone() {
+            self.remap_tab_state_with_manifest(&manifest);
+        }
+
         let current_tabs: HashSet<usize> = tab_infos.iter().map(|tab| tab.position).collect();
 
         self.tab_entries
@@ -136,7 +154,10 @@ impl EmotitleState {
 
     pub fn tab_effective_title(&self, tab_index: usize) -> Option<String> {
         let tab_title = self.tab_title(tab_index);
-        let entry = self.tab_entries.get(&tab_index);
+        let entry = self
+            .tab_entries
+            .get(&tab_index)
+            .map(|tab_entry| &tab_entry.entry);
 
         match (tab_title, entry) {
             (Some(title), Some(entry)) if title == entry.original_title => {
@@ -172,6 +193,7 @@ impl EmotitleState {
     pub fn upsert_tab_entry(
         &mut self,
         tab_index: usize,
+        anchor_pane_id: u32,
         original_title: String,
         emojis: String,
         _mode: Mode,
@@ -179,13 +201,16 @@ impl EmotitleState {
         let original_title = self
             .tab_entries
             .get(&tab_index)
-            .map(|e| e.original_title.clone())
+            .map(|e| e.entry.original_title.clone())
             .unwrap_or(original_title);
         self.tab_entries.insert(
             tab_index,
-            Entry {
-                original_title,
-                emojis,
+            TabEntry {
+                entry: Entry {
+                    original_title,
+                    emojis,
+                },
+                anchor_pane_id,
             },
         );
     }
@@ -199,7 +224,16 @@ impl EmotitleState {
     pub fn tab_original_title(&self, tab_index: usize) -> Option<String> {
         self.tab_entries
             .get(&tab_index)
-            .map(|entry| entry.original_title.clone())
+            .map(|entry| entry.entry.original_title.clone())
+    }
+
+    pub fn tab_anchor_pane_id(&self, tab_index: usize) -> Option<u32> {
+        let panes = self.pane_manifest.as_ref()?.panes.get(&tab_index)?;
+        panes
+            .iter()
+            .find(|pane| pane.is_focused)
+            .or_else(|| panes.first())
+            .map(|pane| pane.id)
     }
 
     fn clean_focused_panes_on_focus(&mut self, pane_manifest: &PaneManifest) -> bool {
@@ -250,21 +284,26 @@ impl EmotitleState {
                 continue;
             }
 
+            let Some(anchor_pane_id) = self.tab_anchor_pane_id(tab.position) else {
+                continue;
+            };
+
             let original_title = self
                 .tab_entries
                 .get(&tab.position)
-                .map(|entry| entry.original_title.as_str())
+                .map(|entry| entry.entry.original_title.as_str())
                 .unwrap_or_else(|| tab.name.split(" | ").next().unwrap_or(&tab.name));
             let cleaned_title = title_with_pinned_segments(original_title, &tab.name);
 
             if tab.name != original_title {
                 let mut remove_entry = false;
                 if let Some(entry) = self.tab_entries.get_mut(&tab.position) {
-                    let suffix = emojis_suffix_from_title(&entry.original_title, &cleaned_title);
+                    let suffix =
+                        emojis_suffix_from_title(&entry.entry.original_title, &cleaned_title);
                     if suffix.is_empty() {
                         remove_entry = true;
                     } else {
-                        entry.emojis = suffix;
+                        entry.entry.emojis = suffix;
                     }
                 }
                 if remove_entry {
@@ -273,8 +312,13 @@ impl EmotitleState {
             }
 
             if cleaned_title != tab.name {
-                self.pending_tab_restores
-                    .insert(tab.position, cleaned_title);
+                self.pending_tab_restores.insert(
+                    tab.position,
+                    PendingTabRestore {
+                        title: cleaned_title,
+                        anchor_pane_id,
+                    },
+                );
                 set_timer = true;
             }
         }
@@ -287,7 +331,50 @@ impl EmotitleState {
     }
 
     pub fn take_pending_tab_restores(&mut self) -> Vec<(usize, String)> {
-        self.pending_tab_restores.drain().collect()
+        let pending = std::mem::take(&mut self.pending_tab_restores);
+        let mut resolved = Vec::new();
+
+        for (previous_index, restore) in pending {
+            if let Some(tab_index) = self.resolve_tab_index_from_pane_id(restore.anchor_pane_id) {
+                resolved.push((tab_index, restore.title));
+            } else {
+                self.pending_tab_restores.insert(previous_index, restore);
+            }
+        }
+
+        resolved
+    }
+
+    pub fn has_pending_tab_restores(&self) -> bool {
+        !self.pending_tab_restores.is_empty()
+    }
+
+    fn remap_tab_state_with_manifest(&mut self, pane_manifest: &PaneManifest) {
+        let pane_id_to_tab_index: HashMap<u32, usize> = pane_manifest
+            .panes
+            .iter()
+            .flat_map(|(tab_index, panes)| panes.iter().map(|pane| (pane.id, *tab_index)))
+            .collect();
+
+        let mut remapped_entries = HashMap::new();
+        for tab_entry in self.tab_entries.drain().map(|(_, tab_entry)| tab_entry) {
+            if let Some(new_index) = pane_id_to_tab_index.get(&tab_entry.anchor_pane_id) {
+                remapped_entries.insert(*new_index, tab_entry);
+            }
+        }
+        self.tab_entries = remapped_entries;
+
+        let mut remapped_restores = HashMap::new();
+        for restore in self
+            .pending_tab_restores
+            .drain()
+            .map(|(_, restore)| restore)
+        {
+            if let Some(new_index) = pane_id_to_tab_index.get(&restore.anchor_pane_id) {
+                remapped_restores.insert(*new_index, restore);
+            }
+        }
+        self.pending_tab_restores = remapped_restores;
     }
 }
 
@@ -388,6 +475,17 @@ mod tests {
             selectable_tiled_panes_count: 0,
             selectable_floating_panes_count: 0,
         }
+    }
+
+    fn update_tab_pane_manifest(state: &mut EmotitleState, tabs: &[(usize, u32, bool)]) {
+        let mut panes = HashMap::new();
+        for (tab_index, pane_id, focused) in tabs {
+            panes.insert(
+                *tab_index,
+                vec![pane_info(*pane_id, false, *focused, "pane")],
+            );
+        }
+        state.update_pane_manifest(PaneManifest { panes });
     }
 
     #[test]
@@ -527,7 +625,8 @@ mod tests {
     #[test]
     fn temp_tab_is_restored_when_it_gets_focus() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(2, "build".to_string(), "✅".to_string(), Mode::Temp);
+        update_tab_pane_manifest(&mut state, &[(2, 20, true)]);
+        state.upsert_tab_entry(2, 20, "build".to_string(), "✅".to_string(), Mode::Temp);
 
         let set_timer = state.update_tab_infos(vec![tab_info(2, true, "build | ✅")]);
 
@@ -541,9 +640,16 @@ mod tests {
     #[test]
     fn all_temp_tabs_are_restored_on_focus() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(1, "main".to_string(), "🚀".to_string(), Mode::Temp);
-        state.upsert_tab_entry(2, "build".to_string(), "📚".to_string(), Mode::Temp);
-        state.upsert_tab_entry(3, "test".to_string(), "📌✅".to_string(), Mode::Permanent);
+        update_tab_pane_manifest(&mut state, &[(1, 11, true), (2, 22, false), (3, 33, false)]);
+        state.upsert_tab_entry(1, 11, "main".to_string(), "🚀".to_string(), Mode::Temp);
+        state.upsert_tab_entry(2, 22, "build".to_string(), "📚".to_string(), Mode::Temp);
+        state.upsert_tab_entry(
+            3,
+            33,
+            "test".to_string(),
+            "📌✅".to_string(),
+            Mode::Permanent,
+        );
 
         let set_timer = state.update_tab_infos(vec![
             tab_info(1, true, "main | 🚀"),
@@ -563,8 +669,15 @@ mod tests {
     #[test]
     fn permanent_tabs_preserved_on_focus() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(1, "main".to_string(), "📌🚀".to_string(), Mode::Permanent);
-        state.upsert_tab_entry(2, "build".to_string(), "📚".to_string(), Mode::Temp);
+        update_tab_pane_manifest(&mut state, &[(1, 11, true), (2, 22, false)]);
+        state.upsert_tab_entry(
+            1,
+            11,
+            "main".to_string(),
+            "📌🚀".to_string(),
+            Mode::Permanent,
+        );
+        state.upsert_tab_entry(2, 22, "build".to_string(), "📚".to_string(), Mode::Temp);
 
         let set_timer = state.update_tab_infos(vec![
             tab_info(1, true, "main | 📌🚀"),
@@ -582,7 +695,14 @@ mod tests {
     #[test]
     fn tab_focus_keeps_only_pinned_segments() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(1, "main".to_string(), "📌✅".to_string(), Mode::Permanent);
+        update_tab_pane_manifest(&mut state, &[(1, 11, true)]);
+        state.upsert_tab_entry(
+            1,
+            11,
+            "main".to_string(),
+            "📌✅".to_string(),
+            Mode::Permanent,
+        );
 
         let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main | 🔔 | 📌✅ | 📚")]);
 
@@ -617,7 +737,8 @@ mod tests {
     #[test]
     fn tab_entry_is_cleared_after_focus_cleanup_without_pinned_segments() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(1, "main".to_string(), "📚".to_string(), Mode::Temp);
+        update_tab_pane_manifest(&mut state, &[(1, 11, true)]);
+        state.upsert_tab_entry(1, 11, "main".to_string(), "📚".to_string(), Mode::Temp);
 
         let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main")]);
 
@@ -652,7 +773,14 @@ mod tests {
     #[test]
     fn tab_entry_is_preserved_when_focused_title_is_still_original() {
         let mut state = EmotitleState::default();
-        state.upsert_tab_entry(1, "main".to_string(), "📌🚀".to_string(), Mode::Permanent);
+        update_tab_pane_manifest(&mut state, &[(1, 11, true)]);
+        state.upsert_tab_entry(
+            1,
+            11,
+            "main".to_string(),
+            "📌🚀".to_string(),
+            Mode::Permanent,
+        );
 
         let set_timer = state.update_tab_infos(vec![tab_info(1, true, "main")]);
 
@@ -731,5 +859,39 @@ mod tests {
             state.pane_original_title(&PaneRef::Terminal(10)).is_none(),
             "deleted pane entry should be removed"
         );
+    }
+
+    #[test]
+    fn tab_entry_tracks_anchor_when_tab_is_inserted_before_it() {
+        let mut state = EmotitleState::default();
+        update_tab_pane_manifest(&mut state, &[(0, 10, false), (1, 20, true)]);
+        state.upsert_tab_entry(1, 20, "work".to_string(), "📚".to_string(), Mode::Temp);
+
+        update_tab_pane_manifest(&mut state, &[(0, 99, false), (1, 10, false), (2, 20, true)]);
+
+        let set_timer = state.update_tab_infos(vec![
+            tab_info(0, false, "new"),
+            tab_info(1, false, "main"),
+            tab_info(2, true, "work | 📚"),
+        ]);
+
+        assert!(set_timer);
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored, vec![(2, "work".to_string())]);
+    }
+
+    #[test]
+    fn tab_entry_tracks_anchor_when_tab_before_it_is_deleted() {
+        let mut state = EmotitleState::default();
+        update_tab_pane_manifest(&mut state, &[(0, 99, false), (1, 20, true)]);
+        state.upsert_tab_entry(1, 20, "work".to_string(), "📚".to_string(), Mode::Temp);
+
+        update_tab_pane_manifest(&mut state, &[(0, 20, true)]);
+
+        let set_timer = state.update_tab_infos(vec![tab_info(0, true, "work | 📚")]);
+
+        assert!(set_timer);
+        let restored = state.take_pending_tab_restores();
+        assert_eq!(restored, vec![(0, "work".to_string())]);
     }
 }

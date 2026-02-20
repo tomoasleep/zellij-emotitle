@@ -78,6 +78,10 @@ impl PluginState {
         for (tab_index, original_title) in tab_restores {
             rename_tab((tab_index + 1) as u32, original_title);
         }
+
+        if self.state.has_pending_tab_restores() {
+            set_timeout(1.0);
+        }
     }
 
     fn handle_command(&mut self, command: Command) -> Result<(), String> {
@@ -143,6 +147,11 @@ impl PluginState {
     }
 
     fn apply_tab(&mut self, tab_index: usize, emojis: String, mode: Mode) -> Result<(), String> {
+        let anchor_pane_id = self.state.tab_anchor_pane_id(tab_index).ok_or_else(|| {
+            format!(
+                "could not resolve anchor pane for tab_index={tab_index}; ensure plugin received PaneUpdate"
+            )
+        })?;
         let base_title = self
             .state
             .tab_effective_title(tab_index)
@@ -165,8 +174,13 @@ impl PluginState {
         let new_title = title_with_emojis(&base_title, &emojis);
         let stored_emojis = emojis_suffix(&original_title, &new_title);
         rename_tab((tab_index + 1) as u32, new_title.clone());
-        self.state
-            .upsert_tab_entry(tab_index, original_title.clone(), stored_emojis, mode);
+        self.state.upsert_tab_entry(
+            tab_index,
+            anchor_pane_id,
+            original_title.clone(),
+            stored_emojis,
+            mode,
+        );
         Ok(())
     }
 }
