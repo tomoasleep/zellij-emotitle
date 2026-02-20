@@ -407,12 +407,12 @@ describe("emotitle plugin e2e", () => {
       await sleep(200);
 
       await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=🛼");
-      await sleep(300);
+      await sleep(100);
 
       let text = await session.text();
       expect(text).toContain("🛼");
 
-      await sleep(1200);
+      await sleep(1500);
 
       text = await session.text();
       expect(text).not.toContain("🛼");
