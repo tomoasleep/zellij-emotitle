@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  getInfo,
   launchZellijSession,
   queryTabNames,
   runPipe,
@@ -343,6 +344,8 @@ describe("emotitle plugin e2e", () => {
     ]);
     await sleep(300);
 
+    const info = await getInfo(configDir, cacheDir, sessionName);
+
     await zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", [
       "TAB_B",
     ]);
@@ -360,13 +363,14 @@ describe("emotitle plugin e2e", () => {
     ]);
     await sleep(300);
 
-    await sleep(1200);
+    const tabCpaneId = info.tabs[2].panes[0].id;
+
     await runPipe(
       session,
       configDir,
       cacheDir,
       sessionName,
-      "target=tab,emojis=📚",
+      `target=tab,pane_id=${tabCpaneId},emojis=📚`,
     );
     await sleep(300);
 
