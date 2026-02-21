@@ -221,11 +221,11 @@ export async function debugPrint(
   text: string | (() => string | Promise<string>),
 ) {
   if (process.env.DEBUG) {
-    if (typeof text === "string") {
-      console.error(text);
-    } else {
+    if (typeof text === "function") {
       const textResult = await text();
       console.error(textResult);
+    } else {
+      console.error(text);
     }
   }
 }
@@ -235,4 +235,46 @@ export async function debugSessionPrint(session: Session) {
     const sessionText = await session.text();
     console.error(sessionText);
   }
+}
+
+export async function runPipe(
+  session: Session,
+  configDir: string,
+  cacheDir: string,
+  sessionName: string,
+  args: string,
+): Promise<string> {
+  await debugPrint(`=== Running zellij pipe with args: ${args}`);
+  const output =
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ""`
+      .env(cleanEnv(cacheDir))
+      .throws(true)
+      .text();
+  await debugPrint(`=== Done running zellij pipe with args: ${args}`);
+  await debugSessionPrint(session);
+
+  if (output.length > 0 && output !== "ok") {
+    throw new Error(`zellij pipe returned plugin error: ${output}`);
+  }
+
+  return output;
+}
+
+export async function getInfo(
+  configDir: string,
+  cacheDir: string,
+  sessionName: string,
+) {
+  const output =
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --args info=true`
+      .env(cleanEnv(cacheDir))
+      .throws(true)
+      .text();
+
+  const info = JSON.parse(output);
+
+  await debugPrint("=== Fetched info ===");
+  await debugPrint(JSON.stringify(info, null, 2));
+
+  return info;
 }

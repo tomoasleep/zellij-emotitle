@@ -1,37 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { $ } from "bun";
 
-import type { Session } from "tuistory";
 import {
-  cleanEnv,
-  debugPrint,
-  debugSessionPrint,
   launchZellijSession,
   queryTabNames,
+  runPipe,
   sleep,
   zellijAction,
 } from "./test-helpers";
-
-async function runPipe(
-  session: Session,
-  configDir: string,
-  cacheDir: string,
-  sessionName: string,
-  args: string,
-): Promise<void> {
-  await debugPrint(`=== Running zellij pipe with args: ${args}`);
-  const output =
-    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ""`
-      .env(cleanEnv(cacheDir))
-      .throws(true)
-      .text();
-  await debugPrint(`=== Done running zellij pipe with args: ${args}`);
-  await debugSessionPrint(session);
-
-  if (output.length > 0 && output !== "ok") {
-    throw new Error(`zellij pipe returned plugin error: ${output}`);
-  }
-}
 
 describe("emotitle plugin e2e", () => {
   test("should apply emojis to the focused pane via pipe", async () => {

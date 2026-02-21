@@ -1,31 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { $ } from "bun";
 
 import {
-  cleanEnv,
   debugPrint,
   debugSessionPrint,
+  getInfo,
   launchZellijSession,
+  runPipe,
   sleep,
 } from "./test-helpers";
-
-async function runPipeWithPlugin(
-  configDir: string,
-  cacheDir: string,
-  sessionName: string,
-  args: string,
-) {
-  const output =
-    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --args ${args}`
-      .env(cleanEnv(cacheDir))
-      .throws(true)
-      .text();
-
-  console.log("pipe output:", output);
-
-  return output;
-}
 
 describe("emotitle info command", () => {
   test("should return valid JSON with tabs and panes info", async () => {
@@ -42,16 +25,10 @@ describe("emotitle info command", () => {
     await session.press("esc");
     await sleep(200);
 
-    const output = await runPipeWithPlugin(
-      configDir,
-      cacheDir,
-      sessionName,
-      "info=true",
-    );
+    const info = await getInfo(configDir, cacheDir, sessionName);
 
     await debugPrint("=== pipe output ===");
-    await debugPrint(output);
-    const info = JSON.parse(output);
+    await debugPrint(info);
 
     expect(info.tabs).toBeInstanceOf(Array);
     expect(info.tabs.length).toBeGreaterThan(0);
@@ -71,7 +48,8 @@ describe("emotitle info command", () => {
     await session.press("esc");
     await sleep(200);
 
-    const output = await runPipeWithPlugin(
+    const output = await runPipe(
+      session,
       configDir,
       cacheDir,
       sessionName,
