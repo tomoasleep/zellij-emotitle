@@ -76,7 +76,9 @@ impl PluginState {
 
         let tab_restores = self.state.take_pending_tab_restores();
         for (tab_index, original_title) in tab_restores {
-            rename_tab((tab_index + 1) as u32, original_title);
+            if let Some(rename_target) = self.state.tab_rename_target(tab_index) {
+                rename_tab(rename_target, original_title);
+            }
         }
 
         if self.state.has_pending_tab_restores() {
@@ -96,20 +98,36 @@ impl PluginState {
                 };
                 self.apply_pane(pane_ref, command.emojis, command.mode)
             }
-            Target::Tab { tab_index, pane_id } => {
+            Target::Tab { pane_id, tab_index } => {
                 let tab_index = if let Some(tab_index) = tab_index {
                     tab_index
                 } else if let Some(pane_id) = pane_id {
                     self.state.resolve_tab_index_from_pane_id(pane_id).ok_or_else(|| {
                         format!(
-                            "could not resolve tab_index from pane_id={pane_id}; ensure plugin received PaneUpdate"
+                            "could not resolve tab_index from pane_id={pane_id}; ensure plugin received PaneUpdate ({})",
+                            self.state.tab_resolution_debug()
                         )
                     })?
                 } else {
-                    self.state.focused_tab_index().ok_or_else(|| {
-                        "could not resolve focused tab; ensure plugin received TabUpdate"
-                            .to_string()
-                    })?
+                    self.state
+                        .focused_tab_index()
+                        .or_else(|| self.state.focused_tab_index_from_manifest())
+                        .or_else(|| {
+                            self.state
+                                .focused_pane_ref()
+                                .and_then(|pane_ref| match pane_ref {
+                                    PaneRef::Terminal(id) => {
+                                        self.state.resolve_tab_index_from_pane_id(id)
+                                    }
+                                    PaneRef::Plugin(_) => None,
+                                })
+                        })
+                        .ok_or_else(|| {
+                            format!(
+                                "could not resolve focused tab; ensure plugin received TabUpdate ({})",
+                                self.state.tab_resolution_debug()
+                            )
+                        })?
                 };
                 self.apply_tab(tab_index, command.emojis, command.mode)
             }
@@ -147,18 +165,15 @@ impl PluginState {
     }
 
     fn apply_tab(&mut self, tab_index: usize, emojis: String, mode: Mode) -> Result<(), String> {
-        let anchor_pane_id = self.state.tab_anchor_pane_id(tab_index).ok_or_else(|| {
-            format!(
-                "could not resolve anchor pane for tab_index={tab_index}; ensure plugin received PaneUpdate"
-            )
-        })?;
+        let anchor_pane_id = self.state.tab_anchor_pane_id(tab_index);
         let base_title = self
             .state
             .tab_effective_title(tab_index)
             .or_else(|| self.state.tab_title(tab_index))
             .ok_or_else(|| {
                 format!(
-                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate"
+                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate ({})",
+                    self.state.tab_resolution_debug()
                 )
             })?;
         let original_title = self
@@ -167,13 +182,21 @@ impl PluginState {
             .or_else(|| self.state.tab_title(tab_index))
             .ok_or_else(|| {
                 format!(
-                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate"
+                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate ({})",
+                    self.state.tab_resolution_debug()
                 )
             })?;
 
         let new_title = title_with_emojis(&base_title, &emojis);
         let stored_emojis = emojis_suffix(&original_title, &new_title);
-        rename_tab((tab_index + 1) as u32, new_title.clone());
+        self.state.clear_pending_tab_restore(tab_index);
+        let rename_target = self.state.tab_rename_target(tab_index).ok_or_else(|| {
+            format!(
+                "could not resolve tab rename target for tab_index={tab_index}; ensure plugin received TabUpdate ({})",
+                self.state.tab_resolution_debug()
+            )
+        })?;
+        rename_tab(rename_target, new_title.clone());
         self.state.upsert_tab_entry(
             tab_index,
             anchor_pane_id,

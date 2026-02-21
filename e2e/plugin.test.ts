@@ -41,6 +41,10 @@ function runPipe(configDir: string, cacheDir: string, sessionName: string, args:
   if (proc.exitCode !== 0) {
     throw new Error(`zellij pipe failed: ${proc.stderr.toString()}`);
   }
+  const output = proc.stdout.toString().trim();
+  if (output.length > 0 && output !== "ok") {
+    throw new Error(`zellij pipe returned plugin error: ${output}`);
+  }
   return Promise.resolve();
 }
 
@@ -510,7 +514,7 @@ describe("emotitle plugin e2e", () => {
       await session.press("esc");
       await sleep(200);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📚");
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,pane_id=2,emojis=📚");
       await sleep(400);
 
       zellijAction(configDir, cacheDir, sessionName, "new-tab");
@@ -530,7 +534,7 @@ describe("emotitle plugin e2e", () => {
     }
   }, 60000);
 
-  test("should keep pinned tab emojis with explicit tab_index after focus", async () => {
+  test("should keep pinned tab emojis on focused tab after focus", async () => {
     const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
     const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
     const sessionName = `emotitle-test-${Date.now()}`;
@@ -561,9 +565,9 @@ describe("emotitle plugin e2e", () => {
       await session.press("esc");
       await sleep(200);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,tab_index=0,emojis=📌🚀");
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌🚀");
       await sleep(200);
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,tab_index=0,emojis=📚");
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📚");
       await sleep(400);
 
       zellijAction(configDir, cacheDir, sessionName, "new-tab");
@@ -692,18 +696,36 @@ describe("emotitle plugin e2e", () => {
       zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_C"]);
       await sleep(300);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌📚");
-      await sleep(250);
-
-      zellijAction(configDir, cacheDir, sessionName, "go-to-tab", ["2"]);
+      zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", ["TAB_B"]);
       await sleep(300);
       zellijAction(configDir, cacheDir, sessionName, "close-tab");
       await sleep(700);
 
-      const tabNames = queryTabNames(configDir, cacheDir, sessionName);
+      zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", ["TAB_C"]);
+      await sleep(300);
+      const targetTabName = `TAB_C_ACTIVE_${Date.now()}`;
+      zellijAction(configDir, cacheDir, sessionName, "rename-tab", [targetTabName]);
+      await sleep(300);
+
+      await sleep(1200);
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📚");
+      await sleep(300);
+
+      let tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
+      expect(tabNames).toContain(`${targetTabName} | 📚`);
       expect(tabNames).toContain("TAB_A");
-      expect(tabNames).toContain("TAB_C");
-      expect(tabNames).toContain("TAB_C | 📌📚");
+
+      await sleep(1300);
+
+      tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
+      expect(tabNames).toContain(targetTabName);
+      expect(tabNames).not.toContain(`${targetTabName} | 📚`);
+
+      await sleep(1300);
+
+      tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
+      expect(tabNames).toContain(targetTabName);
+      expect(tabNames).not.toContain(`${targetTabName} | 📚`);
     } finally {
       try {
         deleteSession(sessionName);
@@ -745,7 +767,7 @@ describe("emotitle plugin e2e", () => {
       await session.press("esc");
       await sleep(200);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=🛼");
+      await runPipe(configDir, cacheDir, sessionName, "target=tab,tab_index=0,emojis=🛼");
       await sleep(300);
 
       let text = await session.text();

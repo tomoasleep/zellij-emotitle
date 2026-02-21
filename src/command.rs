@@ -37,8 +37,8 @@ pub enum Target {
         pane_id: Option<u32>,
     },
     Tab {
-        tab_index: Option<usize>,
         pane_id: Option<u32>,
+        tab_index: Option<usize>,
     },
 }
 
@@ -75,12 +75,15 @@ pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
         "tab" => {
             let pane_id = parse_optional_u32(args.get("pane_id"), "pane_id")?;
             let tab_index = parse_optional_usize(args.get("tab_index"), "tab_index")?;
+            if args.contains_key("tab_position") {
+                return Err("tab_position is no longer supported; use tab_index".to_string());
+            }
             if pane_id.is_some() && tab_index.is_some() {
                 return Err(
                     "pane_id and tab_index cannot be set together when target=tab".to_string(),
                 );
             }
-            Target::Tab { tab_index, pane_id }
+            Target::Tab { pane_id, tab_index }
         }
         other => return Err(format!("unsupported target: {other}")),
     };
@@ -223,8 +226,8 @@ mod tests {
             cmd,
             Command {
                 target: Target::Tab {
-                    tab_index: None,
                     pane_id: Some(77),
+                    tab_index: None,
                 },
                 emojis: "📌📚".to_string(),
                 mode: Mode::Permanent,
@@ -233,13 +236,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_tab_with_both_ids_fails() {
+    fn parse_tab_command_with_tab_index() {
+        let args = map(&[("target", "tab"), ("tab_index", "1"), ("emojis", "📌📚")]);
+        let cmd = parse_args(&args).unwrap();
+        assert_eq!(
+            cmd,
+            Command {
+                target: Target::Tab {
+                    pane_id: None,
+                    tab_index: Some(1),
+                },
+                emojis: "📌📚".to_string(),
+                mode: Mode::Permanent,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tab_with_pane_id_and_tab_index_fails() {
         let args = map(&[
             ("target", "tab"),
-            ("tab_index", "1"),
             ("pane_id", "2"),
+            ("tab_index", "1"),
             ("emojis", "✅"),
         ]);
+        assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn parse_tab_with_tab_position_fails() {
+        let args = map(&[("target", "tab"), ("tab_position", "1"), ("emojis", "✅")]);
         assert!(parse_args(&args).is_err());
     }
 
