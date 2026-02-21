@@ -5,6 +5,7 @@ import { $ } from "bun";
 import { launchTerminal, type Session } from "tuistory";
 
 export const WASM_PATH = `${process.cwd()}/../target/wasm32-wasip1/release/zellij-emotitle.wasm`;
+const PIPE_PAYLOAD = "_";
 
 type SetupConfigOptions = {
   wasmPath?: string;
@@ -174,7 +175,7 @@ export async function launchZellijSession() {
     cacheDir,
     sessionName,
 
-    async [Symbol.asyncDispose]() {
+    [Symbol.dispose]() {
       deleteSession(sessionName);
       session.close();
       cleanupConfigDir(configDir);
@@ -246,7 +247,7 @@ export async function runPipe(
 ): Promise<string> {
   await debugPrint(`=== Running zellij pipe with args: ${args}`);
   const output =
-    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ""`
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ${PIPE_PAYLOAD}`
       .env(cleanEnv(cacheDir))
       .throws(true)
       .text();
@@ -266,7 +267,7 @@ export async function getInfo(
   sessionName: string,
 ) {
   const output =
-    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --args info=true`
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args info=true -- ${PIPE_PAYLOAD}`
       .env(cleanEnv(cacheDir))
       .throws(true)
       .text();

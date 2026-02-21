@@ -12,7 +12,7 @@ import {
 
 describe("emotitle info command", () => {
   test("should return valid JSON with tabs and panes info", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await debugSessionPrint(session);
@@ -42,7 +42,7 @@ describe("emotitle info command", () => {
   }, 30000);
 
   test("should return ok for pane command", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await session.press("esc");

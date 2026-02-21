@@ -11,7 +11,7 @@ import {
 
 describe("emotitle plugin e2e", () => {
   test("should apply emojis to the focused pane via pipe", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await session.press("esc");
@@ -31,7 +31,7 @@ describe("emotitle plugin e2e", () => {
   }, 30000);
 
   test("should not carry pane emojis to a newly created pane after deletion", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -63,7 +63,7 @@ describe("emotitle plugin e2e", () => {
   }, 30000);
 
   test("should keep other pane emojis after deleting the current pane", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -101,7 +101,7 @@ describe("emotitle plugin e2e", () => {
   }, 45000);
 
   test("should keep only pinned segments on focus after stacked emojis", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -129,7 +129,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep pinned emojis on focus after two consecutive pane pipes", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -161,7 +161,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should remove non-pinned pane emojis on focus", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -183,7 +183,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep non-pinned pane emojis before one second and remove after one second", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -205,7 +205,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep all pinned pane segments and remove non-pinned on focus", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -228,7 +228,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should remove non-pinned tab emojis after tab switch", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await zellijAction(configDir, cacheDir, sessionName, "new-tab");
@@ -257,7 +257,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should pin to the tab specified by pane-id", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await zellijAction(configDir, cacheDir, sessionName, "new-tab");
@@ -289,7 +289,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep pinned tab emojis on focused tab after focus", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -321,7 +321,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should not rename inserted tab after tab insertion shifts tracked tab index", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
@@ -361,7 +361,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep tab names aligned after deleting tab before tracked tab", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
@@ -429,7 +429,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should keep non-pinned tab emojis before one second and remove after one second", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
@@ -451,7 +451,7 @@ describe("emotitle plugin e2e", () => {
   }, 60000);
 
   test("should not resurrect previous temp emojis after timer cleanup on focused pane", async () => {
-    await using zellijSession = await launchZellijSession();
+    using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
     await runPipe(
