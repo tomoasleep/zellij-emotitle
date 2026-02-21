@@ -231,6 +231,9 @@ describe("emotitle plugin e2e", () => {
     await using zellijSession = await launchZellijSession();
     const { session, configDir, cacheDir, sessionName } = zellijSession;
 
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(100);
+
     await runPipe(
       session,
       configDir,
@@ -238,14 +241,50 @@ describe("emotitle plugin e2e", () => {
       sessionName,
       "target=tab,tab_index=0,emojis=📚",
     );
-    await sleep(400);
+    await sleep(100);
+    let text = await session.text();
+    expect(text).toContain("📚");
 
-    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
-    await sleep(700);
+    await sleep(1000);
+    text = await session.text();
+    expect(text).toContain("📚");
+
     await zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
     await sleep(1000);
 
-    const text = await session.text();
+    text = await session.text();
+    expect(text).not.toContain("📚");
+  }, 60000);
+
+  test("should pin to the tab specified by pane-id", async () => {
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
+
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(100);
+
+    const info = await getInfo(configDir, cacheDir, sessionName);
+    const firstPaneId = info.tabs[0].panes[0].id;
+
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      `target=tab,pane_id=${firstPaneId},emojis=📚`,
+    );
+    await sleep(100);
+    let text = await session.text();
+    expect(text).toContain("📚");
+
+    await sleep(1000);
+    text = await session.text();
+    expect(text).toContain("📚");
+
+    await zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
+    await sleep(1000);
+
+    text = await session.text();
     expect(text).not.toContain("📚");
   }, 60000);
 
@@ -379,14 +418,6 @@ describe("emotitle plugin e2e", () => {
     ).split("\n");
     expect(tabNames).toContain(`${targetTabName} | 📚`);
     expect(tabNames).toContain("TAB_A");
-
-    await sleep(1300);
-
-    tabNames = (await queryTabNames(configDir, cacheDir, sessionName)).split(
-      "\n",
-    );
-    expect(tabNames).toContain(targetTabName);
-    expect(tabNames).not.toContain(`${targetTabName} | 📚`);
 
     await sleep(1300);
 
