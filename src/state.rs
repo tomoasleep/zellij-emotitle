@@ -1,7 +1,31 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::command::Mode;
+use serde::Serialize;
 use zellij_tile::prelude::{PaneInfo, PaneManifest, TabInfo};
+
+#[derive(Serialize)]
+pub struct PaneDebugInfo {
+    pub id: u32,
+    pub is_plugin: bool,
+    pub is_focused: bool,
+    pub title: String,
+}
+
+#[derive(Serialize)]
+pub struct TabDebugInfo {
+    pub position: usize,
+    pub name: String,
+    pub active: bool,
+    pub panes: Vec<PaneDebugInfo>,
+}
+
+#[derive(Serialize)]
+pub struct InfoDebug {
+    pub tabs: Vec<TabDebugInfo>,
+    pub focused_tab_index: Option<usize>,
+    pub focused_pane: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PaneRef {
@@ -236,6 +260,53 @@ impl EmotitleState {
             self.focused_tab_index_from_manifest(),
             self.focused_pane_ref()
         )
+    }
+
+    pub fn info_debug(&self) -> String {
+        let manifest = self.pane_manifest.as_ref();
+
+        let mut tab_debug_infos: Vec<TabDebugInfo> = self
+            .tab_infos
+            .iter()
+            .map(|tab| {
+                let panes = manifest
+                    .and_then(|m| {
+                        let manifest_position = self
+                            .manifest_tab_position_for_tab_position(tab.position)
+                            .unwrap_or(tab.position);
+                        m.panes.get(&manifest_position)
+                    })
+                    .map(|panes| {
+                        panes
+                            .iter()
+                            .map(|p| PaneDebugInfo {
+                                id: p.id,
+                                is_plugin: p.is_plugin,
+                                is_focused: p.is_focused,
+                                title: p.title.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                TabDebugInfo {
+                    position: tab.position,
+                    name: tab.name.clone(),
+                    active: tab.active,
+                    panes,
+                }
+            })
+            .collect();
+
+        tab_debug_infos.sort_by_key(|t| t.position);
+
+        let info = InfoDebug {
+            tabs: tab_debug_infos,
+            focused_tab_index: self.focused_tab_index(),
+            focused_pane: self.focused_pane_ref().map(|p| format!("{:?}", p)),
+        };
+
+        serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string())
     }
 
     pub fn pane_title(&self, pane_ref: &PaneRef) -> Option<String> {

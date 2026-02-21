@@ -3635,6 +3635,8 @@ name = "zellij-emotitle"
 version = "0.1.0"
 dependencies = [
  "emojis",
+ "serde",
+ "serde_json",
  "zellij-tile",
 ]
 

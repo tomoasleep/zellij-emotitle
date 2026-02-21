@@ -19,6 +19,7 @@ impl ZellijPlugin for PluginState {
         request_permission(&[
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
+            PermissionType::ReadCliPipes,
         ]);
         subscribe(&[
             EventType::PaneUpdate,
@@ -51,14 +52,19 @@ impl ZellijPlugin for PluginState {
             return false;
         }
 
-        let args = pipe_message.args;
-        match parse_args(&args) {
+        let args = &pipe_message.args;
+        if args.get("info").is_some() {
+            print_to_pipe(&pipe_message, &self.state.info_debug());
+            return false;
+        }
+
+        match parse_args(args) {
             Ok(command) => match self.handle_command(command) {
-                Ok(()) => cli_pipe_output(&pipe_message.name, "ok"),
-                Err(err) => cli_pipe_output(&pipe_message.name, &err),
+                Ok(()) => print_to_pipe(&pipe_message, "ok"),
+                Err(err) => print_to_pipe(&pipe_message, &err),
             },
             Err(err) => {
-                cli_pipe_output(&pipe_message.name, &err);
+                print_to_pipe(&pipe_message, &err);
             }
         }
         false
@@ -220,4 +226,13 @@ fn rename_pane(pane_ref: &PaneRef, title: String) {
         PaneRef::Terminal(id) => rename_terminal_pane(*id, title),
         PaneRef::Plugin(id) => rename_plugin_pane(*id, title),
     }
+}
+
+fn print_to_pipe(pipe_message: &PipeMessage, message: &str) {
+    let pipe_id = match &pipe_message.source {
+        PipeSource::Cli(id) => id.clone(),
+        _ => return,
+    };
+
+    cli_pipe_output(&pipe_id, message);
 }
