@@ -1,843 +1,472 @@
-import { test, expect, describe } from "bun:test";
-import { launchTerminal } from "tuistory";
+import { describe, expect, test } from "bun:test";
+import { $ } from "bun";
 
+import type { Session } from "tuistory";
 import {
-  WASM_PATH,
-  setupConfigDir,
-  setupCacheDir,
   cleanEnv,
-  cleanupConfigDir,
-  cleanupCacheDir,
-  zellijAction,
+  debugPrint,
+  debugSessionPrint,
+  launchZellijSession,
   queryTabNames,
-  deleteSession,
   sleep,
+  zellijAction,
 } from "./test-helpers";
 
-function runPipe(configDir: string, cacheDir: string, sessionName: string, args: string): Promise<void> {
-  const proc = Bun.spawnSync(
-    [
-      "zellij",
-      "--config-dir",
-      configDir,
-      "--session",
-      sessionName,
-      "pipe",
-      "--name",
-      "emotitle",
-      "--plugin",
-      `file:${WASM_PATH}`,
-      "--args",
-      args,
-      "--",
-      "",
-    ],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: cleanEnv(cacheDir),
-    },
-  );
-  if (proc.exitCode !== 0) {
-    throw new Error(`zellij pipe failed: ${proc.stderr.toString()}`);
-  }
-  const output = proc.stdout.toString().trim();
+async function runPipe(
+  session: Session,
+  configDir: string,
+  cacheDir: string,
+  sessionName: string,
+  args: string,
+): Promise<void> {
+  await debugPrint(`=== Running zellij pipe with args: ${args}`);
+  const output =
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ""`
+      .env(cleanEnv(cacheDir))
+      .throws(true)
+      .text();
+  await debugPrint(`=== Done running zellij pipe with args: ${args}`);
+  await debugSessionPrint(session);
+
   if (output.length > 0 && output !== "ok") {
     throw new Error(`zellij pipe returned plugin error: ${output}`);
   }
-  return Promise.resolve();
 }
 
 describe("emotitle plugin e2e", () => {
   test("should apply emojis to the focused pane via pipe", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await session.press("esc");
+    await sleep(200);
 
-    try {
-      await sleep(300);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌🚀",
+    );
+    await sleep(500);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🚀");
-      await sleep(500);
-
-      const text = await session.text();
-      expect(text).toContain("📌🚀");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).toContain("📌🚀");
   }, 30000);
 
   test("should not carry pane emojis to a newly created pane after deletion", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌📚",
+    );
+    await sleep(500);
 
-    try {
-      await sleep(300);
+    let text = await session.text();
+    expect(text).toContain("📌📚");
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(300);
 
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
+    await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+    await sleep(500);
 
-      await session.press("esc");
-      await sleep(200);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌📚");
-      await sleep(500);
-
-      let text = await session.text();
-      expect(text).toContain("📌📚");
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(300);
-
-      zellijAction(configDir, cacheDir, sessionName, "close-pane");
-      await sleep(500);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-
-      text = await session.text();
-      expect(text).not.toContain("📌📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).not.toContain("📌📚");
   }, 30000);
 
   test("should keep other pane emojis after deleting the current pane", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌✅",
+    );
+    await sleep(500);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌🎉",
+    );
+    await sleep(500);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
+    let text = await session.text();
+    expect(text).toContain("📌🎉");
 
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
+    await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+    await sleep(500);
 
-      await session.press("esc");
-      await sleep(200);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(500);
 
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌✅");
-      await sleep(500);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🎉");
-      await sleep(500);
-
-      let text = await session.text();
-      expect(text).toContain("📌🎉");
-
-      zellijAction(configDir, cacheDir, sessionName, "close-pane");
-      await sleep(500);
-
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(500);
-
-      text = await session.text();
-      expect(text).toContain("📌✅");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).toContain("📌✅");
   }, 45000);
 
   test("should keep only pinned segments on focus after stacked emojis", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌🚀 | 📚 | 🚗",
+    );
+    await sleep(500);
 
-    try {
-      await sleep(300);
+    let text = await session.text();
+    expect(text).toContain("📌🚀");
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(1700);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🚀 | 📚 | 🚗");
-      await sleep(500);
-
-      let text = await session.text();
-      expect(text).toContain("📌🚀");
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(1700);
-
-      text = await session.text();
-      expect(text).toContain("📌🚀");
-      expect(text).not.toContain("📌🚀 | 📚");
-      expect(text).not.toContain("📚");
-      expect(text).not.toContain("🚗");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).toContain("📌🚀");
+    expect(text).not.toContain("📌🚀 | 📚");
+    expect(text).not.toContain("📚");
+    expect(text).not.toContain("🚗");
   }, 60000);
 
   test("should keep pinned emojis on focus after two consecutive pane pipes", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌🚀",
+    );
+    await sleep(200);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📚",
+    );
+    await sleep(400);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(1000);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🚀");
-      await sleep(200);
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📚");
-      await sleep(400);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(1000);
-
-      const text = await session.text();
-      expect(text).toContain("📌🚀");
-      expect(text).not.toContain("📌🚀 | 📚");
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).toContain("📌🚀");
+    expect(text).not.toContain("📌🚀 | 📚");
+    expect(text).not.toContain("📚");
   }, 60000);
 
   test("should remove non-pinned pane emojis on focus", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📚",
+    );
+    await sleep(400);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(1200);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📚");
-      await sleep(400);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(1000);
-
-      const text = await session.text();
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).not.toContain("📚");
   }, 60000);
 
   test("should keep non-pinned pane emojis before one second and remove after one second", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=🛼",
+    );
+    await sleep(100);
 
-    try {
-      await sleep(300);
+    let text = await session.text();
+    expect(text).toContain("🛼");
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await sleep(1500);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=🛼");
-      await sleep(100);
-
-      let text = await session.text();
-      expect(text).toContain("🛼");
-
-      await sleep(1500);
-
-      text = await session.text();
-      expect(text).not.toContain("🛼");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).not.toContain("🛼");
   }, 60000);
 
   test("should keep all pinned pane segments and remove non-pinned on focus", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📌🚀 | 📌✅ | 📚",
+    );
+    await sleep(400);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+    await sleep(500);
+    await zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
+    await sleep(1000);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📌🚀 | 📌✅ | 📚");
-      await sleep(400);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-pane");
-      await sleep(500);
-      zellijAction(configDir, cacheDir, sessionName, "focus-previous-pane");
-      await sleep(1000);
-
-      const text = await session.text();
-      expect(text).toContain("📌🚀 | 📌✅");
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).toContain("📌🚀 | 📌✅");
+    expect(text).not.toContain("📚");
   }, 60000);
 
   test("should remove non-pinned tab emojis after tab switch", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,tab_index=0,emojis=📚",
+    );
+    await sleep(400);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(700);
+    await zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
+    await sleep(1000);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,pane_id=2,emojis=📚");
-      await sleep(400);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(700);
-      zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
-      await sleep(1000);
-
-      const text = await session.text();
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).not.toContain("📚");
   }, 60000);
 
   test("should keep pinned tab emojis on focused tab after focus", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,emojis=📌🚀",
+    );
+    await sleep(200);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,emojis=📚",
+    );
+    await sleep(400);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(700);
+    await zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
+    await sleep(1000);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌🚀");
-      await sleep(200);
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📚");
-      await sleep(400);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(700);
-      zellijAction(configDir, cacheDir, sessionName, "go-to-previous-tab");
-      await sleep(1000);
-
-      const text = await session.text();
-      expect(text).toContain("📌🚀");
-      expect(text).not.toContain("📌🚀 | 📚");
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const text = await session.text();
+    expect(text).toContain("📌🚀");
+    expect(text).not.toContain("📌🚀 | 📚");
+    expect(text).not.toContain("📚");
   }, 60000);
 
   test("should not rename inserted tab after tab insertion shifts tracked tab index", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_A",
+    ]);
+    await sleep(300);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(700);
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_B",
+    ]);
+    await sleep(300);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,emojis=📌📚",
+    );
+    await sleep(300);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(500);
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_C",
+    ]);
+    await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "move-tab", ["left"]);
+    await sleep(1300);
 
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_A"]);
-      await sleep(300);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(700);
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_B"]);
-      await sleep(300);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📌📚");
-      await sleep(300);
-
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(500);
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_C"]);
-      await sleep(300);
-      zellijAction(configDir, cacheDir, sessionName, "move-tab", ["left"]);
-      await sleep(1300);
-
-      const tabNames = queryTabNames(configDir, cacheDir, sessionName);
-      expect(tabNames).toContain("TAB_C");
-      expect(tabNames).not.toContain("TAB_B TAB_B");
-      expect(tabNames).not.toContain("TAB_B | 📌📚 TAB_B");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    const tabNames = await queryTabNames(configDir, cacheDir, sessionName);
+    expect(tabNames).toContain("TAB_C");
+    expect(tabNames).not.toContain("TAB_B TAB_B");
+    expect(tabNames).not.toContain("TAB_B | 📌📚 TAB_B");
   }, 60000);
 
   test("should keep tab names aligned after deleting tab before tracked tab", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_A",
+    ]);
+    await sleep(300);
 
-    try {
-      await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(700);
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_B",
+    ]);
+    await sleep(300);
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+    await sleep(700);
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      "TAB_C",
+    ]);
+    await sleep(300);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
+    await zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", [
+      "TAB_B",
+    ]);
+    await sleep(300);
+    await zellijAction(configDir, cacheDir, sessionName, "close-tab");
+    await sleep(700);
 
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
+    await zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", [
+      "TAB_C",
+    ]);
+    await sleep(300);
+    const targetTabName = `TAB_C_ACTIVE_${Date.now()}`;
+    await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+      targetTabName,
+    ]);
+    await sleep(300);
 
-      await session.press("esc");
-      await sleep(200);
+    await sleep(1200);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,emojis=📚",
+    );
+    await sleep(300);
 
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_A"]);
-      await sleep(300);
+    let tabNames = (
+      await queryTabNames(configDir, cacheDir, sessionName)
+    ).split("\n");
+    expect(tabNames).toContain(`${targetTabName} | 📚`);
+    expect(tabNames).toContain("TAB_A");
 
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(700);
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_B"]);
-      await sleep(300);
+    await sleep(1300);
 
-      zellijAction(configDir, cacheDir, sessionName, "new-tab");
-      await sleep(700);
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", ["TAB_C"]);
-      await sleep(300);
+    tabNames = (await queryTabNames(configDir, cacheDir, sessionName)).split(
+      "\n",
+    );
+    expect(tabNames).toContain(targetTabName);
+    expect(tabNames).not.toContain(`${targetTabName} | 📚`);
 
-      zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", ["TAB_B"]);
-      await sleep(300);
-      zellijAction(configDir, cacheDir, sessionName, "close-tab");
-      await sleep(700);
+    await sleep(1300);
 
-      zellijAction(configDir, cacheDir, sessionName, "go-to-tab-name", ["TAB_C"]);
-      await sleep(300);
-      const targetTabName = `TAB_C_ACTIVE_${Date.now()}`;
-      zellijAction(configDir, cacheDir, sessionName, "rename-tab", [targetTabName]);
-      await sleep(300);
-
-      await sleep(1200);
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,emojis=📚");
-      await sleep(300);
-
-      let tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
-      expect(tabNames).toContain(`${targetTabName} | 📚`);
-      expect(tabNames).toContain("TAB_A");
-
-      await sleep(1300);
-
-      tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
-      expect(tabNames).toContain(targetTabName);
-      expect(tabNames).not.toContain(`${targetTabName} | 📚`);
-
-      await sleep(1300);
-
-      tabNames = queryTabNames(configDir, cacheDir, sessionName).split("\n");
-      expect(tabNames).toContain(targetTabName);
-      expect(tabNames).not.toContain(`${targetTabName} | 📚`);
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    tabNames = (await queryTabNames(configDir, cacheDir, sessionName)).split(
+      "\n",
+    );
+    expect(tabNames).toContain(targetTabName);
+    expect(tabNames).not.toContain(`${targetTabName} | 📚`);
   }, 60000);
 
   test("should keep non-pinned tab emojis before one second and remove after one second", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=tab,tab_index=0,emojis=🛼",
+    );
+    await sleep(300);
 
-    try {
-      await sleep(300);
+    let text = await session.text();
+    expect(text).toContain("🛼");
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await sleep(1200);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=tab,tab_index=0,emojis=🛼");
-      await sleep(300);
-
-      let text = await session.text();
-      expect(text).toContain("🛼");
-
-      await sleep(1200);
-
-      text = await session.text();
-      expect(text).not.toContain("🛼");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).not.toContain("🛼");
   }, 60000);
 
   test("should not resurrect previous temp emojis after timer cleanup on focused pane", async () => {
-    const configDir = setupConfigDir({ wasmPath: WASM_PATH, simplifiedUi: true, showStartupTips: false });
-    const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
-    const sessionName = `emotitle-test-${Date.now()}`;
+    await using zellijSession = await launchZellijSession();
+    const { session, configDir, cacheDir, sessionName } = zellijSession;
 
-    const session = await launchTerminal({
-      command: "bash",
-      args: [],
-      cols: 140,
-      rows: 35,
-      env: cleanEnv(cacheDir),
-    });
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=📚",
+    );
+    await sleep(1300);
 
-    try {
-      await sleep(300);
+    let text = await session.text();
+    expect(text).not.toContain("📚");
 
-      await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
-      await session.press("enter");
-      await sleep(100);
+    await runPipe(
+      session,
+      configDir,
+      cacheDir,
+      sessionName,
+      "target=pane,emojis=✅",
+    );
+    await sleep(300);
 
-      await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
-      await session.press("enter");
-      await sleep(100);
-
-      await session.type(`zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`);
-      await session.press("enter");
-      await sleep(5000);
-
-      await session.press("esc");
-      await sleep(200);
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=📚");
-      await sleep(1300);
-
-      let text = await session.text();
-      expect(text).not.toContain("📚");
-
-      await runPipe(configDir, cacheDir, sessionName, "target=pane,emojis=✅");
-      await sleep(300);
-
-      text = await session.text();
-      expect(text).toContain("✅");
-      expect(text).not.toContain("📚");
-    } finally {
-      try {
-        deleteSession(sessionName);
-      } catch {}
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    }
+    text = await session.text();
+    expect(text).toContain("✅");
+    expect(text).not.toContain("📚");
   }, 60000);
-
 });

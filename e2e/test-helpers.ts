@@ -1,8 +1,10 @@
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { $ } from "bun";
+import { launchTerminal, type Session } from "tuistory";
 
-export const WASM_PATH = process.cwd() + "/../target/wasm32-wasip1/release/zellij-emotitle.wasm";
+export const WASM_PATH = `${process.cwd()}/../target/wasm32-wasip1/release/zellij-emotitle.wasm`;
 
 type SetupConfigOptions = {
   wasmPath?: string;
@@ -15,14 +17,23 @@ type SetupCacheOptions = {
 };
 
 export function setupConfigDir(options: SetupConfigOptions = {}): string {
-  const configDir = join(tmpdir(), `zellij-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const configDir = join(
+    tmpdir(),
+    `zellij-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(configDir, { recursive: true });
   mkdirSync(join(configDir, "layouts"), { recursive: true });
+
+  const plugins = `
+plugins {
+  emotitle location="file:${options.wasmPath}"
+}
+`;
 
   const loadPlugins = options.wasmPath
     ? `
 load_plugins {
-  file "${options.wasmPath}"
+  emotitle
 }
 `
     : "";
@@ -33,17 +44,24 @@ ui {
 }
 `
     : "";
-  const startupTips = options.showStartupTips === false ? "\nshow_startup_tips false\n" : "";
-  
-  writeFileSync(join(configDir, "config.kdl"), `
+  const startupTips =
+    options.showStartupTips === false ? "\nshow_startup_tips false\n" : "";
+
+  writeFileSync(
+    join(configDir, "config.kdl"),
+    `
 keybinds {
   normal {}
 }
+${plugins}
 ${loadPlugins}
 ${uiConfig}
 ${startupTips}
-  `);
-  writeFileSync(join(configDir, "layouts", "default.kdl"), `
+  `,
+  );
+  writeFileSync(
+    join(configDir, "layouts", "default.kdl"),
+    `
   layout {
     pane size=1 split_direction="Vertical" borderless=true {
         plugin location="tab-bar"
@@ -53,21 +71,29 @@ ${startupTips}
         plugin location="status-bar"
     }
   }
-  `);
-  
+  `,
+  );
+
   return configDir;
 }
 
-export function setupCacheDir(options: SetupCacheOptions = {}): string {
-  const cacheDir = join(tmpdir(), `zellij-cache-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+function setupCacheDir(options: SetupCacheOptions = {}): string {
+  const cacheDir = join(
+    tmpdir(),
+    `zellij-cache-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   mkdirSync(cacheDir, { recursive: true });
 
   if (options.wasmPath) {
-    writeFileSync(join(cacheDir, "permissions.kdl"), `"${options.wasmPath}" {
+    writeFileSync(
+      join(cacheDir, "permissions.kdl"),
+      `"${options.wasmPath}" {
     ChangeApplicationState
     ReadApplicationState
+    ReadCliPipes
 }
-`);
+`,
+    );
   }
 
   return cacheDir;
@@ -80,7 +106,7 @@ export function cleanEnv(cacheDir: string): Record<string, string> {
       env[key] = value;
     }
   }
-  env["ZELLIJ_CACHE_DIR"] = cacheDir;
+  env.ZELLIJ_CACHE_DIR = cacheDir;
   return env;
 }
 
@@ -96,33 +122,117 @@ export function cleanupCacheDir(cacheDir: string): void {
   } catch {}
 }
 
-export function zellijAction(configDir: string, cacheDir: string, sessionName: string, action: string, args: string[] = []): void {
-  const result = Bun.spawnSync(
-    ["zellij", "--config-dir", configDir, "--session", sessionName, "action", action, ...args],
-    { encoding: "utf-8", env: cleanEnv(cacheDir) }
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(`zellij action ${action} failed: ${result.stderr}`);
-  }
-}
-
-export function queryTabNames(configDir: string, cacheDir: string, sessionName: string): string {
-  const result = Bun.spawnSync(
-    ["zellij", "--config-dir", configDir, "--session", sessionName, "action", "query-tab-names"],
-    { encoding: "utf-8", env: cleanEnv(cacheDir) },
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(`zellij action query-tab-names failed: ${result.stderr}`);
-  }
-  return result.stdout.toString().trim();
-}
-
-export function deleteSession(sessionName: string): void {
-  Bun.spawnSync(["zellij", "delete-session", "-f", sessionName], {
-    timeout: 5000,
+export async function launchZellijSession() {
+  const configDir = setupConfigDir({
+    wasmPath: WASM_PATH,
+    simplifiedUi: true,
+    showStartupTips: false,
   });
+  const cacheDir = setupCacheDir({ wasmPath: WASM_PATH });
+  const sessionName = `emotitle-test-${Date.now()}`;
+
+  await debugPrint("=== LaunchTerminal");
+  const session = await launchTerminal({
+    command: "bash",
+    args: [],
+    cols: 140,
+    rows: 35,
+    env: cleanEnv(cacheDir),
+  });
+  await debugPrint("=== Done LaunchTerminal");
+
+  await session.type("unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME");
+  await session.press("enter");
+  await sleep(100);
+
+  await session.type(`export ZELLIJ_CACHE_DIR=${cacheDir}`);
+  await session.press("enter");
+  await sleep(100);
+  await debugSessionPrint(session);
+
+  await debugPrint("=== Launch zellij session");
+  await session.type(
+    `zellij --config-dir ${configDir} -s ${sessionName} options --simplified-ui true`,
+  );
+  await session.press("enter");
+  await session.waitForText(`Zellij (${sessionName})`, { timeout: 5000 });
+  await debugPrint("=== Done launching zellij session");
+  await debugSessionPrint(session);
+
+  const sessionText = await session.text();
+  await debugPrint(sessionText);
+  if (sessionText.includes("Allow? (y/n)")) {
+    await debugPrint("=== Allow permission for plugin");
+    await session.type("y");
+    await sleep(100);
+    await debugPrint("=== Done allowing permission");
+  }
+
+  return {
+    session,
+    configDir,
+    cacheDir,
+    sessionName,
+
+    async [Symbol.asyncDispose]() {
+      deleteSession(sessionName);
+      session.close();
+      cleanupConfigDir(configDir);
+      cleanupCacheDir(cacheDir);
+    },
+  };
+}
+
+export async function zellijAction(
+  configDir: string,
+  cacheDir: string,
+  sessionName: string,
+  action: string,
+  args: string[] = [],
+) {
+  await debugPrint(`=== Running zellij action: ${action} ${args.join(" ")}`);
+  return $`zellij --config-dir ${configDir} --session ${sessionName} action ${action} ${args.join(" ")}`
+    .env(cleanEnv(cacheDir))
+    .throws(true)
+    .text();
+}
+
+export async function queryTabNames(
+  configDir: string,
+  cacheDir: string,
+  sessionName: string,
+): Promise<string> {
+  await debugPrint(`=== Querying tab names for session ${sessionName}`);
+  return $`zellij --config-dir ${configDir} --session ${sessionName} action query-tab-names`
+    .env(cleanEnv(cacheDir))
+    .throws(true)
+    .text();
+}
+
+export async function deleteSession(sessionName: string) {
+  return $`zellij delete-session -f ${sessionName}`.throws(false).text();
 }
 
 export async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+export async function debugPrint(
+  text: string | (() => string | Promise<string>),
+) {
+  if (process.env.DEBUG) {
+    if (typeof text === "string") {
+      console.error(text);
+    } else {
+      const textResult = await text();
+      console.error(textResult);
+    }
+  }
+}
+
+export async function debugSessionPrint(session: Session) {
+  if (process.env.DEBUG) {
+    const sessionText = await session.text();
+    console.error(sessionText);
+  }
 }
