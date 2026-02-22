@@ -315,6 +315,10 @@ describe("emotitle plugin (tab target)", () => {
           await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
             "TAB_C",
           ]);
+          await zellijAction(configDir, cacheDir, sessionName, "new-tab");
+          await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+            "TAB_D",
+          ]);
 
           await zellijAction(
             configDir,
@@ -334,8 +338,8 @@ describe("emotitle plugin (tab target)", () => {
             const { configDir, cacheDir, sessionName } = context;
 
             const info = await getInfo(configDir, cacheDir, sessionName);
-            const tabCpaneId = info.tabs[1].position;
-            const tabCName = "TAB_C";
+            const tabCpaneId = info.tabs[2].position;
+            const tabCName = "TAB_D";
 
             await pinNonPinnedEmojiToTabByTabIndex({
               context,
