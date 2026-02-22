@@ -17,7 +17,9 @@ Follow these project-specific commands and conventions.
 - `src/command.rs`: pipe argument parsing and validation
 - `src/state.rs`: runtime state and restore logic
 - `README.md`: build and usage contract
-- `e2e/plugin.test.ts`: Bun-based end-to-end scenarios
+- `e2e/pane.test.ts`: E2E tests for pane target
+- `e2e/tab.test.ts`: E2E tests for tab target
+- `e2e/info.test.ts`: E2E tests for info command
 - `e2e/test-helpers.ts`: E2E fixtures, config/cache setup, zellij actions
 
 ## Toolchain and Runtime Notes
@@ -39,26 +41,17 @@ Follow these project-specific commands and conventions.
 - Optional host clippy: `cargo clippy --all-targets --target aarch64-apple-darwin -- -D warnings`
 
 ## Test Commands
-Current constraints (verified in this repository):
-- `cargo test` fails because Rust tries to execute a wasm test binary directly
-- `cargo test --target aarch64-apple-darwin` fails at link time due unresolved `zellij_tile` host symbols
-- Unit tests exist and are useful for intent, but cannot be executed directly in the current binary-crate/plugin layout
-
-Rust test command reference:
-- All tests (expected wasm execution failure): `cargo test`
-- All tests on host (expected linker failure): `cargo test --target aarch64-apple-darwin`
-- Single test by name (same current host limitation):
-  - `cargo test --target aarch64-apple-darwin parse_pane_temp_command -- --exact`
-  - `cargo test --target aarch64-apple-darwin tab_focus_keeps_only_pinned_segments -- --exact`
-- Single test by module path:
-  - `cargo test --target aarch64-apple-darwin command::tests::parse_pane_temp_command -- --exact`
-  - `cargo test --target aarch64-apple-darwin state::tests::temp_tab_is_restored_when_it_gets_focus -- --exact`
+Rust unit tests cannot be executed directly (wasm target + `zellij_tile` host symbols limitation).
 
 E2E test command reference (in `e2e/`):
 - Run all E2E tests: `bun test`
-- Run a single test file: `bun test plugin.test.ts`
+- Run a single test file: `bun test pane.test.ts`
 - Run one E2E case by name regex:
-  - `bun test plugin.test.ts --test-name-pattern "should apply emojis to the focused pane via pipe"`
+  - `bun test pane.test.ts --test-name-pattern "should apply emojis to focused pane"`
+  - `bun test tab.test.ts --test-name-pattern "should apply emojis to the tab"`
+- Debug E2E tests: `DEBUG=1 bun test pane.test.ts`
+- Build WASM before E2E: `cargo build --release --target wasm32-wasip1`
+- WASM path for E2E: `../target/wasm32-wasip1/release/zellij_emotitle.wasm` (relative to e2e/)
 
 Practical validation strategy for code changes today:
 - `cargo fmt --all -- --check`
@@ -87,48 +80,53 @@ Practical validation strategy for code changes today:
 
 ### Types and Data Modeling
 - Use enums for closed domain sets (`Mode`, `Target`, `PaneRef`)
-- Use structs for grouped state and payloads (`Command`, `Entry`, `EmotitleState`)
+- Use structs for grouped state and payloads (`Command`, `EmotitleState`)
 - Derive traits intentionally (`Debug`, `Clone`, `PartialEq`, `Eq`, `Hash`, `Default`)
-- Use `Option<T>` for optional inputs and derived runtime values
-- Use `Result<T, String>` for user-facing parse/apply failures
+- Use `Option<T>` for optional inputs, `Result<T, String>` for parse/apply failures
 
 ### Naming Conventions
 - Types/enums/traits: `UpperCamelCase`
 - Functions/methods/modules/variables: `snake_case`
 - Constants/statics: `SCREAMING_SNAKE_CASE`
-- Prefer names that map directly to plugin domain behavior
 
 ### Error Handling
 - Return actionable, user-readable error strings
 - Include argument names and invalid values where possible
 - Prefer `ok_or_else`, `map_err`, and expression-oriented error paths
-- Avoid `unwrap`/`expect` in production code
-- `unwrap`/`expect` are acceptable in tests for setup and assertions
+- Avoid `unwrap`/`expect` in production code (acceptable in tests)
 
-### Control Flow and Logic
+### Control Flow and State Management
 - Prefer `match` for enum-driven branching (`Target`, `Event`)
-- Keep event handlers deterministic and side-effect boundaries explicit
-- Preserve tab index convention:
-  - internal `tab_index` is zero-based
-  - `rename_tab` requires one-based (`tab_index + 1`)
-- Do not alter temp/permanent restore semantics unless requested
-
-### State Management
 - Treat `EmotitleState` as the single source of runtime truth
-- Update manifests first, then derive focused entities and pending restores
-- Preserve originally captured titles when updating entries
+- Preserve tab index convention: internal is zero-based, `rename_tab` requires one-based
 - Keep pane and tab logic symmetrical unless API behavior requires divergence
 
 ### Testing Practices
 - Keep tests close to logic in `#[cfg(test)]` modules
 - Cover success and invalid-input branches for parsing and state transitions
-- Prefer concise local test helpers (`map`, `pane_info`, `tab_info`)
 - Add regression tests when changing restoration or focus behavior
 
-### Documentation and Comments
+### Documentation
 - Prefer clear code over explanatory comments
-- Add comments only for non-obvious constraints
 - Keep `README.md` examples aligned with real argument behavior
+
+## TypeScript/E2E Test Guidelines
+
+### Test Structure
+- Use `describe` blocks for grouping related tests
+- Use `test.todo` for pending tests, `test.failing` for known failing tests
+- Set appropriate timeouts (e.g., `}, 60000)` for complex scenarios)
+
+### Test Helpers
+- Use `launchZellijSession()` from `test-helpers.ts` for session setup
+- Use `runPipe()` for emotitle pipe commands
+- Use `zellijAction()` for zellij actions like `new-tab`, `new-pane`
+- Use `getInfo()` to get current pane/tab state via `info` command
+
+### Async and Debugging
+- Use `await sleep(ms)` for timing-dependent assertions
+- Allow sufficient time for zellij state propagation (100-500ms typical)
+- Set `DEBUG=1` environment variable for verbose output
 
 ## Zellij Plugin Guardrails
 - Keep plugin non-selectable via `set_selectable(false)` unless requirements change
