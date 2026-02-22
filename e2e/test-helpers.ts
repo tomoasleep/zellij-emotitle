@@ -250,16 +250,21 @@ export async function runPipe(
   sessionName: string,
   args: string,
 ): Promise<string> {
-  await debugPrint(`=== Running zellij pipe with args: ${args}`);
+  const traceArg = process.env.DEBUG ? "trace=1" : "";
+  const fullArgs = traceArg ? `${traceArg},${args}` : args;
+  await debugPrint(`=== Running zellij pipe with args: ${fullArgs}`);
   const output =
-    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${args} -- ${PIPE_PAYLOAD}`
+    await $`zellij --config-dir ${configDir} --session ${sessionName} pipe --name emotitle --plugin emotitle --args ${fullArgs} -- ${PIPE_PAYLOAD}`
       .env(cleanEnv(cacheDir))
       .throws(true)
       .text();
-  await debugPrint(`=== Done running zellij pipe with args: ${args}`);
+  await debugPrint(`=== Done running zellij pipe with args: ${fullArgs}`);
+  if (output.length > 0) {
+    await debugPrint(`=== Pipe output:\n${output}`);
+  }
   await debugSessionPrint(session);
 
-  if (output.length > 0 && output !== "ok") {
+  if (output.length > 0 && !output.includes("ok") && !output.includes("[trace]")) {
     throw new Error(`zellij pipe returned plugin error: ${output}`);
   }
 

@@ -47,6 +47,7 @@ pub struct Command {
     pub target: Target,
     pub emojis: String,
     pub mode: Mode,
+    pub trace: bool,
 }
 
 pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
@@ -88,10 +89,16 @@ pub fn parse_args(args: &BTreeMap<String, String>) -> Result<Command, String> {
         other => return Err(format!("unsupported target: {other}")),
     };
 
+    let trace = args
+        .get("trace")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
     Ok(Command {
         target: command_target,
         emojis,
         mode,
+        trace,
     })
 }
 

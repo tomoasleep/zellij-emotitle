@@ -538,3 +538,69 @@ fn pane_matches(pane_info: &PaneInfo, pane_ref: &PaneRef) -> bool {
         PaneRef::Plugin(id) => pane_info.is_plugin && pane_info.id == *id,
     }
 }
+
+impl EmotitleState {
+    pub fn trace_pane_info(&self, pane_ref: &PaneRef) -> String {
+        let title = self
+            .pane_title(pane_ref)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        match pane_ref {
+            PaneRef::Terminal(id) => format!("pane terminal:{} title=\"{}\"", id, title),
+            PaneRef::Plugin(id) => format!("pane plugin:{} title=\"{}\"", id, title),
+        }
+    }
+
+    pub fn trace_tab_info(&self, tab_index: usize) -> String {
+        let title = self
+            .tab_title(tab_index)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        format!("tab {} title=\"{}\"", tab_index, title)
+    }
+
+    pub fn trace_resolution_for_pane(&self, pane_id: u32) -> String {
+        let mut lines = vec![format!("resolving tab_index from pane_id={}", pane_id)];
+
+        let manifest = match &self.pane_manifest {
+            Some(m) => m,
+            None => {
+                lines.push("no pane_manifest available".to_string());
+                return lines.join("\n");
+            }
+        };
+
+        let candidates: Vec<usize> = manifest
+            .panes
+            .iter()
+            .filter_map(|(tab_position, panes)| {
+                panes
+                    .iter()
+                    .any(|pane| !pane.is_plugin && pane.id == pane_id)
+                    .then_some(*tab_position)
+            })
+            .filter_map(|manifest_tab_position| {
+                self.tab_position_for_manifest_position(manifest_tab_position)
+            })
+            .collect();
+
+        lines.push(format!("candidates: {:?}", candidates));
+
+        if let Some(focused) = self.focused_tab_index() {
+            lines.push(format!("focused_tab_index: {} (from tab_infos)", focused));
+        }
+
+        if let Some(focused_manifest) = self.focused_tab_index_from_manifest() {
+            lines.push(format!(
+                "focused_tab_index_from_manifest: {}",
+                focused_manifest
+            ));
+        }
+
+        if let Some(resolved) = self.resolve_tab_index_from_pane_id(pane_id) {
+            lines.push(format!("resolved: tab_index={}", resolved));
+        } else {
+            lines.push("resolved: <none>".to_string());
+        }
+
+        lines.join("\n")
+    }
+}

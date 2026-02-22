@@ -3,7 +3,7 @@ mod state;
 
 use std::collections::BTreeMap;
 
-use command::{parse_args, Command, Target};
+use command::{parse_args, Command, Mode, Target};
 use state::{title_with_emojis, EmotitleState, PaneRef};
 use zellij_tile::prelude::*;
 
@@ -59,7 +59,7 @@ impl ZellijPlugin for PluginState {
         }
 
         match parse_args(args) {
-            Ok(command) => match self.handle_command(command) {
+            Ok(command) => match self.handle_command(command, &pipe_message) {
                 Ok(()) => print_to_pipe(&pipe_message, "ok"),
                 Err(err) => print_to_pipe(&pipe_message, &err),
             },
@@ -92,7 +92,11 @@ impl PluginState {
         }
     }
 
-    fn handle_command(&mut self, command: Command) -> Result<(), String> {
+    fn handle_command(
+        &mut self,
+        command: Command,
+        pipe_message: &PipeMessage,
+    ) -> Result<(), String> {
         match command.target {
             Target::Pane { pane_id } => {
                 let pane_ref = match pane_id {
@@ -102,12 +106,27 @@ impl PluginState {
                             .to_string()
                     })?,
                 };
-                self.apply_pane(pane_ref, command.emojis)
+                self.apply_pane(
+                    pane_ref,
+                    command.emojis,
+                    command.mode,
+                    command.trace,
+                    pipe_message,
+                )
             }
             Target::Tab { pane_id, tab_index } => {
                 let tab_index = if let Some(tab_index) = tab_index {
                     tab_index
                 } else if let Some(pane_id) = pane_id {
+                    if command.trace {
+                        print_to_pipe(
+                            pipe_message,
+                            &format!(
+                                "[trace] {}\n",
+                                self.state.trace_resolution_for_pane(pane_id)
+                            ),
+                        );
+                    }
                     self.state.resolve_tab_index_from_pane_id(pane_id).ok_or_else(|| {
                         format!(
                             "could not resolve tab_index from pane_id={pane_id}; ensure plugin received PaneUpdate ({})",
@@ -135,12 +154,25 @@ impl PluginState {
                             )
                         })?
                 };
-                self.apply_tab(tab_index, command.emojis)
+                self.apply_tab(
+                    tab_index,
+                    command.emojis,
+                    command.mode,
+                    command.trace,
+                    pipe_message,
+                )
             }
         }
     }
 
-    fn apply_pane(&mut self, pane_ref: PaneRef, emojis: String) -> Result<(), String> {
+    fn apply_pane(
+        &mut self,
+        pane_ref: PaneRef,
+        emojis: String,
+        mode: Mode,
+        trace: bool,
+        pipe_message: &PipeMessage,
+    ) -> Result<(), String> {
         let base_title = self
             .state
             .pane_effective_title(&pane_ref)
@@ -150,12 +182,41 @@ impl PluginState {
                     .to_string()
             })?;
 
+        if trace {
+            print_to_pipe(
+                pipe_message,
+                &format!(
+                    "[trace] before: {}\n",
+                    self.state.trace_pane_info(&pane_ref)
+                ),
+            );
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] mode={:?} emojis={}\n", mode, emojis),
+            );
+        }
+
         let new_title = title_with_emojis(&base_title, &emojis);
-        rename_pane(&pane_ref, new_title);
+        rename_pane(&pane_ref, new_title.clone());
+
+        if trace {
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] after: {}\n", self.state.trace_pane_info(&pane_ref)),
+            );
+        }
+
         Ok(())
     }
 
-    fn apply_tab(&mut self, tab_index: usize, emojis: String) -> Result<(), String> {
+    fn apply_tab(
+        &mut self,
+        tab_index: usize,
+        emojis: String,
+        mode: Mode,
+        trace: bool,
+        pipe_message: &PipeMessage,
+    ) -> Result<(), String> {
         let base_title = self
             .state
             .tab_effective_title(tab_index)
@@ -167,6 +228,17 @@ impl PluginState {
                 )
             })?;
 
+        if trace {
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] before: {}\n", self.state.trace_tab_info(tab_index)),
+            );
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] mode={:?} emojis={}\n", mode, emojis),
+            );
+        }
+
         let new_title = title_with_emojis(&base_title, &emojis);
         self.state.clear_pending_tab_restore(tab_index);
         let rename_target = self.state.tab_rename_target(tab_index).ok_or_else(|| {
@@ -175,7 +247,21 @@ impl PluginState {
                 self.state.tab_resolution_debug()
             )
         })?;
-        rename_tab(rename_target, new_title);
+        if trace {
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] Rename: {} {}\n", rename_target, new_title),
+            );
+        }
+        rename_tab(rename_target, new_title.clone());
+
+        if trace {
+            print_to_pipe(
+                pipe_message,
+                &format!("[trace] after: {}\n", self.state.trace_tab_info(tab_index)),
+            );
+        }
+
         Ok(())
     }
 }
