@@ -1,3 +1,4 @@
+import { onTestFinished } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -169,18 +170,22 @@ export async function launchZellijSession() {
     await debugPrint("=== Done allowing permission");
   }
 
+  const dispose = () => {
+    deleteSession(sessionName);
+    session.close();
+    cleanupConfigDir(configDir);
+    cleanupCacheDir(cacheDir);
+  };
+
+  onTestFinished(dispose);
+
   return {
     session,
     configDir,
     cacheDir,
     sessionName,
 
-    [Symbol.dispose]() {
-      deleteSession(sessionName);
-      session.close();
-      cleanupConfigDir(configDir);
-      cleanupCacheDir(cacheDir);
-    },
+    [Symbol.dispose]: dispose,
   };
 }
 
