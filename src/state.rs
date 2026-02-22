@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::command::Mode;
 use serde::Serialize;
 use zellij_tile::prelude::{PaneInfo, PaneManifest, TabInfo};
 
@@ -34,18 +33,6 @@ pub enum PaneRef {
 }
 
 #[derive(Debug, Clone)]
-pub struct Entry {
-    pub original_title: String,
-    pub emojis: String,
-}
-
-#[derive(Debug, Clone)]
-struct TabEntry {
-    entry: Entry,
-    anchor_pane_id: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
 struct PendingTabRestore {
     title: String,
     anchor_pane_id: Option<u32>,
@@ -55,8 +42,6 @@ struct PendingTabRestore {
 pub struct EmotitleState {
     pub pane_manifest: Option<PaneManifest>,
     pub tab_infos: Vec<TabInfo>,
-    pane_entries: HashMap<PaneRef, Entry>,
-    tab_entries: HashMap<usize, TabEntry>,
     pending_pane_restores: HashMap<PaneRef, String>,
     pending_tab_restores: HashMap<usize, PendingTabRestore>,
 }
@@ -70,45 +55,23 @@ impl EmotitleState {
             .map(pane_ref_from_pane_info)
             .collect();
 
-        self.pane_entries
-            .retain(|pane_ref, _| current_panes.contains(pane_ref));
-
         self.pending_pane_restores
             .retain(|pane_ref, _| current_panes.contains(pane_ref));
 
         self.remap_tab_state_with_manifest(&pane_manifest);
 
         self.pane_manifest = Some(pane_manifest.clone());
-        let focused: Vec<PaneRef> = pane_manifest
-            .panes
-            .values()
-            .flat_map(|panes| panes.iter())
-            .filter(|pane| pane.is_focused)
-            .map(pane_ref_from_pane_info)
-            .collect();
-        let cleaned = self.clean_focused_panes_on_focus(&pane_manifest);
-        let _ = focused;
-        cleaned
+        self.clean_focused_panes_on_focus(&pane_manifest)
     }
 
     pub fn update_tab_infos(&mut self, tab_infos: Vec<TabInfo>) -> bool {
         let current_tabs: HashSet<usize> = tab_infos.iter().map(|tab| tab.position).collect();
 
-        self.tab_entries
-            .retain(|tab_index, _| current_tabs.contains(tab_index));
-
         self.pending_tab_restores
             .retain(|tab_index, _| current_tabs.contains(tab_index));
 
         self.tab_infos = tab_infos.clone();
-        let focused: Vec<usize> = tab_infos
-            .iter()
-            .filter(|tab| tab.active)
-            .map(|tab| tab.position)
-            .collect();
-        let cleaned = self.clean_focused_tabs_on_focus(&tab_infos);
-        let _ = focused;
-        cleaned
+        self.clean_focused_tabs_on_focus(&tab_infos)
     }
 
     pub fn resolve_tab_index_from_pane_id(&self, pane_id: u32) -> Option<usize> {
@@ -321,17 +284,7 @@ impl EmotitleState {
     }
 
     pub fn pane_effective_title(&self, pane_ref: &PaneRef) -> Option<String> {
-        let pane_title = self.pane_title(pane_ref);
-        let entry = self.pane_entries.get(pane_ref);
-
-        match (pane_title, entry) {
-            (Some(title), Some(entry)) if title == entry.original_title => {
-                Some(title_with_emojis(&entry.original_title, &entry.emojis))
-            }
-            (Some(title), _) => Some(title),
-            (None, Some(entry)) => Some(title_with_emojis(&entry.original_title, &entry.emojis)),
-            (None, None) => None,
-        }
+        self.pane_title(pane_ref)
     }
 
     pub fn tab_title(&self, tab_index: usize) -> Option<String> {
@@ -342,20 +295,7 @@ impl EmotitleState {
     }
 
     pub fn tab_effective_title(&self, tab_index: usize) -> Option<String> {
-        let tab_title = self.tab_title(tab_index);
-        let entry = self
-            .tab_entries
-            .get(&tab_index)
-            .map(|tab_entry| &tab_entry.entry);
-
-        match (tab_title, entry) {
-            (Some(title), Some(entry)) if title == entry.original_title => {
-                Some(title_with_emojis(&entry.original_title, &entry.emojis))
-            }
-            (Some(title), _) => Some(title),
-            (None, Some(entry)) => Some(title_with_emojis(&entry.original_title, &entry.emojis)),
-            (None, None) => None,
-        }
+        self.tab_title(tab_index)
     }
 
     pub fn tab_rename_target(&self, tab_index: usize) -> Option<u32> {
@@ -365,65 +305,6 @@ impl EmotitleState {
             .iter()
             .position(|position| *position == tab_index)?;
         Some((ordinal + 1) as u32)
-    }
-
-    pub fn upsert_pane_entry(
-        &mut self,
-        pane_ref: PaneRef,
-        original_title: String,
-        emojis: String,
-        _mode: Mode,
-    ) {
-        let original_title = self
-            .pane_entries
-            .get(&pane_ref)
-            .map(|e| e.original_title.clone())
-            .unwrap_or(original_title);
-        self.pane_entries.insert(
-            pane_ref,
-            Entry {
-                original_title,
-                emojis,
-            },
-        );
-    }
-
-    pub fn upsert_tab_entry(
-        &mut self,
-        tab_index: usize,
-        anchor_pane_id: Option<u32>,
-        original_title: String,
-        emojis: String,
-        _mode: Mode,
-    ) {
-        let original_title = self
-            .tab_entries
-            .get(&tab_index)
-            .filter(|e| e.anchor_pane_id == anchor_pane_id)
-            .map(|e| e.entry.original_title.clone())
-            .unwrap_or(original_title);
-        self.tab_entries.insert(
-            tab_index,
-            TabEntry {
-                entry: Entry {
-                    original_title,
-                    emojis,
-                },
-                anchor_pane_id,
-            },
-        );
-    }
-
-    pub fn pane_original_title(&self, pane_ref: &PaneRef) -> Option<String> {
-        self.pane_entries
-            .get(pane_ref)
-            .map(|entry| entry.original_title.clone())
-    }
-
-    pub fn tab_original_title(&self, tab_index: usize) -> Option<String> {
-        self.tab_entries
-            .get(&tab_index)
-            .map(|entry| entry.entry.original_title.clone())
     }
 
     pub fn tab_anchor_pane_id(&self, tab_index: usize) -> Option<u32> {
@@ -446,27 +327,8 @@ impl EmotitleState {
             }
 
             let pane_ref = pane_ref_from_pane_info(pane);
-            let original_title = self
-                .pane_entries
-                .get(&pane_ref)
-                .map(|entry| entry.original_title.as_str())
-                .unwrap_or_else(|| pane.title.split(" | ").next().unwrap_or(&pane.title));
-            let cleaned_title = title_with_pinned_segments(original_title, &pane.title);
-
-            if pane.title != original_title {
-                let mut remove_entry = false;
-                if let Some(entry) = self.pane_entries.get_mut(&pane_ref) {
-                    let suffix = emojis_suffix_from_title(&entry.original_title, &cleaned_title);
-                    if suffix.is_empty() {
-                        remove_entry = true;
-                    } else {
-                        entry.emojis = suffix;
-                    }
-                }
-                if remove_entry {
-                    self.pane_entries.remove(&pane_ref);
-                }
-            }
+            let original_title = extract_original_title(&pane.title);
+            let cleaned_title = title_with_pinned_segments(&original_title, &pane.title);
 
             if cleaned_title != pane.title {
                 self.pending_pane_restores.insert(pane_ref, cleaned_title);
@@ -488,28 +350,8 @@ impl EmotitleState {
 
             let anchor_pane_id = self.tab_anchor_pane_id(tab_index);
 
-            let original_title = self
-                .tab_entries
-                .get(&tab_index)
-                .map(|entry| entry.entry.original_title.as_str())
-                .unwrap_or_else(|| tab.name.split(" | ").next().unwrap_or(&tab.name));
-            let cleaned_title = title_with_pinned_segments(original_title, &tab.name);
-
-            if tab.name != original_title {
-                let mut remove_entry = false;
-                if let Some(entry) = self.tab_entries.get_mut(&tab_index) {
-                    let suffix =
-                        emojis_suffix_from_title(&entry.entry.original_title, &cleaned_title);
-                    if suffix.is_empty() {
-                        remove_entry = true;
-                    } else {
-                        entry.entry.emojis = suffix;
-                    }
-                }
-                if remove_entry {
-                    self.tab_entries.remove(&tab_index);
-                }
-            }
+            let original_title = extract_original_title(&tab.name);
+            let cleaned_title = title_with_pinned_segments(&original_title, &tab.name);
 
             if cleaned_title != tab.name {
                 self.pending_tab_restores.insert(
@@ -601,20 +443,6 @@ impl EmotitleState {
             })
             .collect();
 
-        let mut remapped_entries = HashMap::new();
-        for (previous_index, tab_entry) in self.tab_entries.drain() {
-            if let Some(anchor_pane_id) = tab_entry.anchor_pane_id {
-                if let Some(new_index) = pane_id_to_tab_index.get(&anchor_pane_id) {
-                    remapped_entries.insert(*new_index, tab_entry);
-                } else {
-                    remapped_entries.insert(previous_index, tab_entry);
-                }
-            } else {
-                remapped_entries.insert(previous_index, tab_entry);
-            }
-        }
-        self.tab_entries = remapped_entries;
-
         let mut remapped_restores = HashMap::new();
         for (previous_index, restore) in self.pending_tab_restores.drain() {
             if let Some(anchor_pane_id) = restore.anchor_pane_id {
@@ -673,11 +501,8 @@ pub fn title_with_emojis(original_title: &str, emojis: &str) -> String {
     format!("{original_title} | {emojis}")
 }
 
-fn emojis_suffix_from_title(original_title: &str, title: &str) -> String {
-    title
-        .strip_prefix(&format!("{original_title} | "))
-        .unwrap_or("")
-        .to_string()
+fn extract_original_title(title: &str) -> String {
+    title.split(" | ").next().unwrap_or(title).to_string()
 }
 
 pub fn title_with_pinned_segments(original_title: &str, current_title: &str) -> String {

@@ -3,7 +3,7 @@ mod state;
 
 use std::collections::BTreeMap;
 
-use command::{parse_args, Command, Mode, Target};
+use command::{parse_args, Command, Target};
 use state::{title_with_emojis, EmotitleState, PaneRef};
 use zellij_tile::prelude::*;
 
@@ -102,7 +102,7 @@ impl PluginState {
                             .to_string()
                     })?,
                 };
-                self.apply_pane(pane_ref, command.emojis, command.mode)
+                self.apply_pane(pane_ref, command.emojis)
             }
             Target::Tab { pane_id, tab_index } => {
                 let tab_index = if let Some(tab_index) = tab_index {
@@ -135,12 +135,12 @@ impl PluginState {
                             )
                         })?
                 };
-                self.apply_tab(tab_index, command.emojis, command.mode)
+                self.apply_tab(tab_index, command.emojis)
             }
         }
     }
 
-    fn apply_pane(&mut self, pane_ref: PaneRef, emojis: String, mode: Mode) -> Result<(), String> {
+    fn apply_pane(&mut self, pane_ref: PaneRef, emojis: String) -> Result<(), String> {
         let base_title = self
             .state
             .pane_effective_title(&pane_ref)
@@ -149,29 +149,13 @@ impl PluginState {
                 "could not find pane title; ensure plugin is loaded and received PaneUpdate"
                     .to_string()
             })?;
-        let original_title = self
-            .state
-            .pane_original_title(&pane_ref)
-            .or_else(|| self.state.pane_title(&pane_ref))
-            .ok_or_else(|| {
-                "could not find pane title; ensure plugin is loaded and received PaneUpdate"
-                    .to_string()
-            })?;
 
         let new_title = title_with_emojis(&base_title, &emojis);
-        let stored_emojis = emojis_suffix(&original_title, &new_title);
-        rename_pane(&pane_ref, new_title.clone());
-        self.state.upsert_pane_entry(
-            pane_ref.clone(),
-            original_title.clone(),
-            stored_emojis,
-            mode,
-        );
+        rename_pane(&pane_ref, new_title);
         Ok(())
     }
 
-    fn apply_tab(&mut self, tab_index: usize, emojis: String, mode: Mode) -> Result<(), String> {
-        let anchor_pane_id = self.state.tab_anchor_pane_id(tab_index);
+    fn apply_tab(&mut self, tab_index: usize, emojis: String) -> Result<(), String> {
         let base_title = self
             .state
             .tab_effective_title(tab_index)
@@ -182,19 +166,8 @@ impl PluginState {
                     self.state.tab_resolution_debug()
                 )
             })?;
-        let original_title = self
-            .state
-            .tab_original_title(tab_index)
-            .or_else(|| self.state.tab_title(tab_index))
-            .ok_or_else(|| {
-                format!(
-                    "could not find tab title for tab_index={tab_index}; ensure plugin received TabUpdate ({})",
-                    self.state.tab_resolution_debug()
-                )
-            })?;
 
         let new_title = title_with_emojis(&base_title, &emojis);
-        let stored_emojis = emojis_suffix(&original_title, &new_title);
         self.state.clear_pending_tab_restore(tab_index);
         let rename_target = self.state.tab_rename_target(tab_index).ok_or_else(|| {
             format!(
@@ -202,23 +175,9 @@ impl PluginState {
                 self.state.tab_resolution_debug()
             )
         })?;
-        rename_tab(rename_target, new_title.clone());
-        self.state.upsert_tab_entry(
-            tab_index,
-            anchor_pane_id,
-            original_title.clone(),
-            stored_emojis,
-            mode,
-        );
+        rename_tab(rename_target, new_title);
         Ok(())
     }
-}
-
-fn emojis_suffix(original_title: &str, title: &str) -> String {
-    title
-        .strip_prefix(&format!("{original_title} | "))
-        .unwrap_or("")
-        .to_string()
 }
 
 fn rename_pane(pane_ref: &PaneRef, title: String) {
