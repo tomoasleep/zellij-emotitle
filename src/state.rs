@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use zellij_tile::prelude::{PaneInfo, PaneManifest, TabInfo};
 
+use crate::tab_index_tracker::{InternalIndexEntry, TabIndexTracker};
+
 #[derive(Serialize)]
 pub struct PaneDebugInfo {
     pub id: u32,
@@ -24,6 +26,7 @@ pub struct InfoDebug {
     pub tabs: Vec<TabDebugInfo>,
     pub focused_tab_index: Option<usize>,
     pub focused_pane: Option<String>,
+    pub internal_index_map: Vec<InternalIndexEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,8 +47,7 @@ pub struct EmotitleState {
     pub tab_infos: Vec<TabInfo>,
     pending_pane_restores: HashMap<PaneRef, String>,
     pending_tab_restores: HashMap<usize, PendingTabRestore>,
-    tab_internal_index_map: HashMap<u32, usize>,
-    next_internal_index: usize,
+    tab_index_tracker: TabIndexTracker,
 }
 
 impl EmotitleState {
@@ -62,7 +64,11 @@ impl EmotitleState {
 
         self.remap_tab_state_with_manifest(&pane_manifest);
 
-        self.pane_manifest = Some(pane_manifest.clone());
+        self.pane_manifest = Some(pane_manifest);
+        let tab_panes = self.build_tab_panes();
+        self.tab_index_tracker
+            .update_for_pane_update(&self.tab_infos, &tab_panes);
+        let pane_manifest = self.pane_manifest.clone().unwrap();
         self.clean_focused_panes_on_focus(&pane_manifest)
     }
 
@@ -72,32 +78,46 @@ impl EmotitleState {
         self.pending_tab_restores
             .retain(|tab_index, _| current_tabs.contains(tab_index));
 
-        self.tab_infos = tab_infos.clone();
-        if self.pane_manifest.is_some() {
-            self.update_internal_index_map();
-        }
+        self.tab_infos = tab_infos;
+        let tab_panes = self.build_tab_panes();
+        self.tab_index_tracker
+            .update_for_tab_update(&self.tab_infos, &tab_panes);
+        let tab_infos = self.tab_infos.clone();
         self.clean_focused_tabs_on_focus(&tab_infos)
     }
 
-    fn update_internal_index_map(&mut self) {
-        let current_anchor_ids: HashSet<u32> = self
+    fn build_tab_panes(&self) -> HashMap<usize, Vec<crate::tab_index_tracker::PaneKey>> {
+        let manifest = match &self.pane_manifest {
+            Some(m) => m,
+            None => return HashMap::new(),
+        };
+
+        let manifest_to_tab: HashMap<usize, usize> = self
             .tab_infos
             .iter()
-            .filter_map(|tab| self.tab_anchor_pane_id(tab.position))
+            .filter_map(|tab| {
+                let manifest_pos = self.manifest_tab_position_for_tab_position(tab.position)?;
+                Some((manifest_pos, tab.position))
+            })
             .collect();
 
-        self.tab_internal_index_map
-            .retain(|anchor_id, _| current_anchor_ids.contains(anchor_id));
-
-        for tab in &self.tab_infos {
-            if let Some(anchor_id) = self.tab_anchor_pane_id(tab.position) {
-                if !self.tab_internal_index_map.contains_key(&anchor_id) {
-                    self.tab_internal_index_map
-                        .insert(anchor_id, self.next_internal_index);
-                    self.next_internal_index += 1;
-                }
-            }
+        let mut result = HashMap::new();
+        for (manifest_tab_position, panes) in &manifest.panes {
+            let Some(&tab_position) = manifest_to_tab.get(manifest_tab_position) else {
+                continue;
+            };
+            let mut keys: Vec<crate::tab_index_tracker::PaneKey> = panes
+                .iter()
+                .filter(|pane| !pane.is_plugin)
+                .map(|pane| crate::tab_index_tracker::PaneKey {
+                    is_plugin: false,
+                    id: pane.id,
+                })
+                .collect();
+            keys.sort_by_key(|key| key.id);
+            result.insert(tab_position, keys);
         }
+        result
     }
 
     pub fn resolve_tab_index_from_pane_id(&self, pane_id: u32) -> Option<usize> {
@@ -243,8 +263,15 @@ impl EmotitleState {
                     .join(",")
             })
             .unwrap_or_else(|| "none".to_string());
+        let internal_index_map: String = self
+            .tab_index_tracker
+            .get_debug_entries()
+            .iter()
+            .map(|entry| format!("{:?}={}", entry.pane_keys, entry.internal_index))
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "tab_infos=[{tab_positions}] manifest_positions=[{manifest_positions}] manifest_panes=[{manifest_panes}] focused_tab={:?} focused_tab_manifest={:?} focused_pane={:?}",
+            "tab_infos=[{tab_positions}] manifest_positions=[{manifest_positions}] manifest_panes=[{manifest_panes}] focused_tab={:?} focused_tab_manifest={:?} focused_pane={:?} internal_index_map=[{internal_index_map}]",
             self.focused_tab_index(),
             self.focused_tab_index_from_manifest(),
             self.focused_pane_ref()
@@ -289,10 +316,13 @@ impl EmotitleState {
 
         tab_debug_infos.sort_by_key(|t| t.position);
 
+        let internal_index_map = self.tab_index_tracker.get_debug_entries();
+
         let info = InfoDebug {
             tabs: tab_debug_infos,
             focused_tab_index: self.focused_tab_index(),
             focused_pane: self.focused_pane_ref().map(|p| format!("{:?}", p)),
+            internal_index_map,
         };
 
         serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string())
@@ -325,9 +355,9 @@ impl EmotitleState {
     }
 
     pub fn tab_rename_target(&self, tab_index: usize) -> Option<u32> {
-        let anchor_pane_id = self.tab_anchor_pane_id(tab_index)?;
-        let internal_index = self.tab_internal_index_map.get(&anchor_pane_id)?;
-        Some((*internal_index + 1) as u32)
+        let tab_panes = self.build_tab_panes();
+        self.tab_index_tracker
+            .get_rename_target(&tab_panes, tab_index)
     }
 
     pub fn tab_anchor_pane_id(&self, tab_index: usize) -> Option<u32> {

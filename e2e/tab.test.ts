@@ -451,4 +451,62 @@ describe("emotitle plugin (tab target)", () => {
       test.todo("should remove emojis on tab switch", () => {});
     });
   });
+
+  describe("when panes are deleted from tab", () => {
+    const createTabWithMultiplePanes = async ({
+      configDir,
+      cacheDir,
+      sessionName,
+    }: Context) => {
+      await zellijAction(configDir, cacheDir, sessionName, "rename-tab", [
+        "MULTI_PANE",
+      ]);
+      await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+      await sleep(100);
+      await zellijAction(configDir, cacheDir, sessionName, "new-pane");
+      await sleep(100);
+    };
+
+    describe("when the emoji type is pinned", () => {
+      test("should keep pinned emojis after pane deletion", async () => {
+        const context = await setupSession();
+        await createTabWithMultiplePanes(context);
+        const { session, configDir, cacheDir, sessionName } = context;
+
+        await pinEmojiToTab({ context, emojis: "📌🚀" });
+        await sleep(200);
+
+        await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+        await sleep(100);
+        await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+        await sleep(300);
+
+        const tabNames = await queryTabNames(configDir, cacheDir, sessionName);
+        expect(tabNames).toContain("MULTI_PANE | 📌🚀");
+      }, 60000);
+    });
+
+    describe("when the emoji type is non-pinned", () => {
+      test("should apply emoji and restore after pane deletion", async () => {
+        const context = await setupSession();
+        await createTabWithMultiplePanes(context);
+        const { session, configDir, cacheDir, sessionName } = context;
+
+        await pinEmojiToTab({ context, emojis: "📚" });
+        await sleep(200);
+
+        let tabNames = await queryTabNames(configDir, cacheDir, sessionName);
+        expect(tabNames).toContain("MULTI_PANE | 📚");
+
+        await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+        await sleep(100);
+        await zellijAction(configDir, cacheDir, sessionName, "close-pane");
+        await sleep(1300);
+
+        tabNames = await queryTabNames(configDir, cacheDir, sessionName);
+        expect(tabNames).toContain("MULTI_PANE");
+        expect(tabNames).not.toContain("MULTI_PANE | 📚");
+      }, 60000);
+    });
+  });
 });

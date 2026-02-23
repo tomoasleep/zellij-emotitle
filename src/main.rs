@@ -1,5 +1,6 @@
 mod command;
 mod state;
+mod tab_index_tracker;
 
 use std::collections::BTreeMap;
 
