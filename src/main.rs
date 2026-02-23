@@ -4,7 +4,9 @@ mod state;
 use std::collections::BTreeMap;
 
 use command::{parse_args, Command, Mode, Target};
-use state::{title_with_emojis, EmotitleState, PaneRef};
+use state::{
+    extract_original_title, title_with_emojis, title_with_pinned_segments, EmotitleState, PaneRef,
+};
 use zellij_tile::prelude::*;
 
 register_plugin!(PluginState);
@@ -217,7 +219,7 @@ impl PluginState {
         trace: bool,
         pipe_message: &PipeMessage,
     ) -> Result<(), String> {
-        let base_title = self
+        let current_title = self
             .state
             .tab_effective_title(tab_index)
             .or_else(|| self.state.tab_title(tab_index))
@@ -227,6 +229,8 @@ impl PluginState {
                     self.state.tab_resolution_debug()
                 )
             })?;
+        let original_title = extract_original_title(&current_title);
+        let base_title = title_with_pinned_segments(&original_title, &current_title);
 
         if trace {
             print_to_pipe(

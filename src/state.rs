@@ -44,6 +44,8 @@ pub struct EmotitleState {
     pub tab_infos: Vec<TabInfo>,
     pending_pane_restores: HashMap<PaneRef, String>,
     pending_tab_restores: HashMap<usize, PendingTabRestore>,
+    tab_internal_index_map: HashMap<u32, usize>,
+    next_internal_index: usize,
 }
 
 impl EmotitleState {
@@ -71,7 +73,31 @@ impl EmotitleState {
             .retain(|tab_index, _| current_tabs.contains(tab_index));
 
         self.tab_infos = tab_infos.clone();
+        if self.pane_manifest.is_some() {
+            self.update_internal_index_map();
+        }
         self.clean_focused_tabs_on_focus(&tab_infos)
+    }
+
+    fn update_internal_index_map(&mut self) {
+        let current_anchor_ids: HashSet<u32> = self
+            .tab_infos
+            .iter()
+            .filter_map(|tab| self.tab_anchor_pane_id(tab.position))
+            .collect();
+
+        self.tab_internal_index_map
+            .retain(|anchor_id, _| current_anchor_ids.contains(anchor_id));
+
+        for tab in &self.tab_infos {
+            if let Some(anchor_id) = self.tab_anchor_pane_id(tab.position) {
+                if !self.tab_internal_index_map.contains_key(&anchor_id) {
+                    self.tab_internal_index_map
+                        .insert(anchor_id, self.next_internal_index);
+                    self.next_internal_index += 1;
+                }
+            }
+        }
     }
 
     pub fn resolve_tab_index_from_pane_id(&self, pane_id: u32) -> Option<usize> {
@@ -299,12 +325,9 @@ impl EmotitleState {
     }
 
     pub fn tab_rename_target(&self, tab_index: usize) -> Option<u32> {
-        let mut positions: Vec<usize> = self.tab_infos.iter().map(|tab| tab.position).collect();
-        positions.sort_unstable();
-        let ordinal = positions
-            .iter()
-            .position(|position| *position == tab_index)?;
-        Some((ordinal + 1) as u32)
+        let anchor_pane_id = self.tab_anchor_pane_id(tab_index)?;
+        let internal_index = self.tab_internal_index_map.get(&anchor_pane_id)?;
+        Some((*internal_index + 1) as u32)
     }
 
     pub fn tab_anchor_pane_id(&self, tab_index: usize) -> Option<u32> {
@@ -313,8 +336,8 @@ impl EmotitleState {
         let panes = manifest.panes.get(&manifest_tab_position)?;
         panes
             .iter()
-            .find(|pane| !pane.is_plugin && pane.is_focused)
-            .or_else(|| panes.iter().find(|pane| !pane.is_plugin))
+            .filter(|pane| !pane.is_plugin)
+            .min_by_key(|pane| pane.id)
             .map(|pane| pane.id)
     }
 
@@ -501,7 +524,7 @@ pub fn title_with_emojis(original_title: &str, emojis: &str) -> String {
     format!("{original_title} | {emojis}")
 }
 
-fn extract_original_title(title: &str) -> String {
+pub fn extract_original_title(title: &str) -> String {
     title.split(" | ").next().unwrap_or(title).to_string()
 }
 

@@ -181,7 +181,7 @@ describe("emotitle plugin (tab target)", () => {
           await zellijAction(configDir, cacheDir, sessionName, "close-tab");
         };
 
-        test.failing(
+        test(
           "should apply emoji and delete after focusing",
           async () => {
             const context = await setupSession();
@@ -330,7 +330,7 @@ describe("emotitle plugin (tab target)", () => {
           await zellijAction(configDir, cacheDir, sessionName, "close-tab");
         };
 
-        test.failing(
+        test(
           "should apply emoji and delete after focusing",
           async () => {
             const context = await setupSession();
