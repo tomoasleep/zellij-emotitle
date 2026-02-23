@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use zellij_tile::prelude::{PaneInfo, PaneManifest, TabInfo};
 
-use crate::tab_index_tracker::{InternalIndexEntry, TabIndexTracker};
+use crate::tab_index_tracker::{InternalIndexEntry, TabIndexEvent, TabIndexTracker};
 
 #[derive(Serialize)]
 pub struct PaneDebugInfo {
@@ -27,6 +27,7 @@ pub struct InfoDebug {
     pub focused_tab_index: Option<usize>,
     pub focused_pane: Option<String>,
     pub internal_index_map: Vec<InternalIndexEntry>,
+    pub event_history: Vec<TabIndexEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -317,12 +318,14 @@ impl EmotitleState {
         tab_debug_infos.sort_by_key(|t| t.position);
 
         let internal_index_map = self.tab_index_tracker.get_debug_entries();
+        let event_history = self.tab_index_tracker.get_event_history();
 
         let info = InfoDebug {
             tabs: tab_debug_infos,
             focused_tab_index: self.focused_tab_index(),
             focused_pane: self.focused_pane_ref().map(|p| format!("{:?}", p)),
             internal_index_map,
+            event_history,
         };
 
         serde_json::to_string(&info).unwrap_or_else(|_| "{}".to_string())

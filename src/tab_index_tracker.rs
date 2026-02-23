@@ -1,11 +1,28 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::Serialize;
+
+const MAX_EVENT_HISTORY: usize = 200;
 
 #[derive(Hash, Eq, PartialEq, Clone, Serialize, Debug)]
 pub struct PaneKey {
     pub is_plugin: bool,
     pub id: u32,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct TabIndexEvent {
+    pub seq: u64,
+    pub event_type: TabIndexEventType,
+    pub pane_keys: Vec<PaneKey>,
+    pub internal_index: usize,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub enum TabIndexEventType {
+    TabAdded,
+    TabKeyUpdated,
+    TabRemoved,
 }
 
 #[derive(Serialize)]
@@ -18,6 +35,9 @@ pub struct InternalIndexEntry {
 pub struct TabIndexTracker {
     internal_index_map: HashMap<Vec<PaneKey>, usize>,
     next_internal_index: usize,
+    event_history: VecDeque<TabIndexEvent>,
+    event_seq: u64,
+    removed_keys: HashSet<Vec<PaneKey>>,
 }
 
 impl TabIndexTracker {
@@ -31,11 +51,26 @@ impl TabIndexTracker {
             .filter_map(|tab| tab_panes.get(&tab.position).cloned())
             .collect();
 
-        self.internal_index_map.retain(|old_keys, _| {
-            current_tab_panes
-                .iter()
-                .any(|current| current.iter().any(|key| old_keys.contains(key)))
-        });
+        let newly_removed: Vec<(Vec<PaneKey>, usize)> = self
+            .internal_index_map
+            .iter()
+            .filter(|(old_keys, _)| {
+                !self.removed_keys.contains(*old_keys)
+                    && !current_tab_panes
+                        .iter()
+                        .any(|current| current.iter().any(|key| old_keys.contains(key)))
+            })
+            .map(|(keys, &idx)| (keys.clone(), idx))
+            .collect();
+
+        for (pane_keys, internal_index) in newly_removed {
+            self.record_event(
+                TabIndexEventType::TabRemoved,
+                pane_keys.clone(),
+                internal_index,
+            );
+            self.removed_keys.insert(pane_keys);
+        }
 
         self.update_common(tab_infos, tab_panes);
     }
@@ -68,17 +103,50 @@ impl TabIndexTracker {
 
             if let Some((old_keys, &internal_index)) = existing {
                 if old_keys != pane_keys {
-                    let old_keys = old_keys.clone();
-                    self.internal_index_map.remove(&old_keys);
                     self.internal_index_map
                         .insert(pane_keys.clone(), internal_index);
+                    self.record_event(
+                        TabIndexEventType::TabKeyUpdated,
+                        pane_keys.clone(),
+                        internal_index,
+                    );
                 }
             } else if !self.internal_index_map.contains_key(pane_keys) {
-                self.internal_index_map
-                    .insert(pane_keys.clone(), self.next_internal_index);
+                let internal_index = self.next_internal_index;
                 self.next_internal_index += 1;
+                self.internal_index_map
+                    .insert(pane_keys.clone(), internal_index);
+                self.record_event(
+                    TabIndexEventType::TabAdded,
+                    pane_keys.clone(),
+                    internal_index,
+                );
             }
         }
+    }
+
+    fn record_event(
+        &mut self,
+        event_type: TabIndexEventType,
+        pane_keys: Vec<PaneKey>,
+        internal_index: usize,
+    ) {
+        let event = TabIndexEvent {
+            seq: self.event_seq,
+            event_type,
+            pane_keys,
+            internal_index,
+        };
+        self.event_seq += 1;
+
+        if self.event_history.len() >= MAX_EVENT_HISTORY {
+            self.event_history.pop_front();
+        }
+        self.event_history.push_back(event);
+    }
+
+    pub fn get_event_history(&self) -> Vec<TabIndexEvent> {
+        self.event_history.iter().cloned().collect()
     }
 
     pub fn get_rename_target(
